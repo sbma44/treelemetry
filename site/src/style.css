@@ -1,8 +1,10 @@
 :root {
   --color-bg: #0f1419;
   --color-surface: #1a1f2e;
-  --color-primary: #2dd4bf;
-  --color-secondary: #818cf8;
+  --color-holly: #dd4444;
+  --color-pine: hsl(162, 69%, 40%);
+  --color-primary: var(--color-holly);
+  --color-secondary: rgb(129, 140, 248);
   --color-accent: #f472b6;
   --color-text: #e5e7eb;
   --color-text-dim: #9ca3af;
@@ -53,7 +55,7 @@ h1 {
   font-size: 3rem;
   font-weight: 700;
   margin-bottom: var(--spacing-sm);
-  background: linear-gradient(135deg, var(--color-primary), var(--color-secondary));
+  background: var(--color-primary);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -132,7 +134,7 @@ a {
 .stat-value {
   font-size: 2.5rem;
   font-weight: 700;
-  color: var(--color-primary);
+  color: var(--color-pine);
   line-height: 1;
 }
 
@@ -201,7 +203,7 @@ a {
 }
 
 .units-btn.active {
-  background: var(--color-secondary);
+  background: var(--color-pine);
   color: var(--color-bg);
 }
 
