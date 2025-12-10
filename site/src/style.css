@@ -55,10 +55,11 @@ h1 {
   font-size: 3rem;
   font-weight: 700;
   margin-bottom: var(--spacing-sm);
-  background: var(--color-primary);
+  color: var(--color-primary);
+  /* background: var(--color-primary);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
-  background-clip: text;
+  background-clip: text; */
 }
 
 a {
