@@ -31,3 +31,4 @@ echo "  - sample_output.json.gz (compressed)"
 echo ""
 echo "To clean up: rm tree.duckdb* sample_output.json*"
 
+
