@@ -1,0 +1,52 @@
+# MQTT Logger Project Rules
+
+## Environment
+- Use the uv package manager for all dependencies and for running the project, including for testing
+- Python 3.11+ is required
+- The project is designed to run as a systemd service in production
+
+## Code Style
+- Use Python 3.11+ features (e.g., `|` for Union types)
+- Follow PEP 8 style guidelines
+- Prefer type hints for all function signatures
+- Use descriptive variable names
+- Use ruff for linting and formatting
+
+## Project Structure
+- Application code lives in `src/mqtt_logger/`
+- Tests live in `tests/` directory
+- Configuration files in `config/` directory
+- Main entry point is `main.py` in the root
+
+## Project-Specific Guidelines
+- All MQTT-related code should include proper error handling for connection failures
+- Log messages should use structured logging with appropriate levels
+- Configuration should be read from TOML config files
+- Always validate table names to prevent SQL injection
+- Use batched writes for database operations
+- Implement graceful shutdown with signal handlers
+
+## Testing
+- Write unit tests for all new functions
+- Mock MQTT connections in tests
+- Use pytest fixtures for test setup
+- Aim for high test coverage
+- Tests should be isolated and repeatable
+
+## Documentation
+- Add docstrings to all functions and classes
+- Include examples in docstrings for complex functions
+- Keep README.md updated with setup and usage instructions
+- Document systemd service configuration changes
+
+## Database
+- Use DuckDB for message storage
+- Always flush pending writes on shutdown
+- Validate table names before use in SQL
+- Create indexes for time-based queries
+
+## Security
+- Run service with minimal privileges
+- Validate all configuration inputs
+- Use parameterized queries for SQL
+- Restrict filesystem access in systemd service

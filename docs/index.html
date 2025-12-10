@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Treelemetry 🎄💧 - Christmas Tree Water Level Monitor</title>
+  <script type="module" crossorigin src="/treelemetry/assets/index-DtFhzjoH.js"></script>
+  <link rel="stylesheet" crossorigin href="/treelemetry/assets/index-CVsazsy7.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🎄 Treelemetry 💧</h1>
+      <!-- <p class="tagline">Monitoring Tom's Christmas tree hydration with unnecessary precision</p> -->
+    </header>
+
+    <div id="loading" class="loading">
+      <div class="spinner"></div>
+      <p>Loading water level data...</p>
+    </div>
+
+    <div id="error" class="error" style="display: none;">
+      <p>Failed to load data. Please try again later.</p>
+    </div>
+
+    <main id="main-content" style="display: none;">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Current Level</div>
+          <div class="stat-value" id="current-level">--</div>
+          <div class="stat-unit">mm</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Estimated Time to Refill</div>
+          <div class="stat-value" id="time-to-refill">--</div>
+          <div class="stat-unit" id="refill-unit">hours</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Measurement Frequency</div>
+          <div class="stat-value" id="measurement-frequency">--</div>
+          <div class="stat-unit">Hz</div>
+        </div>
+      </div>
+
+      <!-- Real-time Chart (Last 10 Minutes) -->
+      <div class="chart-container">
+        <div class="chart-header">
+          <h2>Water Level Monitor - Real-time</h2>
+          <p><em>All values delayed 5 minutes. For real-time data, contact enterprise sales.</em></p>
+          <div class="controls-row">
+            <div class="units-toggle">
+              <button class="units-btn active" data-unit="mm">mm</button>
+              <button class="units-btn" data-unit="mL">mL</button>
+            </div>
+          </div>
+        </div>
+        <div class="chart-scroll-wrapper">
+          <div class="chart-canvas-wrapper">
+            <canvas id="water-chart"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Daily View (5-minute aggregates, last 24 hours) -->
+      <div class="chart-container">
+        <div class="chart-header">
+          <h2>Last 24 Hours (5-minute intervals)</h2>
+          <p><em>Aggregated view with mean, min, max</em></p>
+        </div>
+        <div class="chart-scroll-wrapper">
+          <div class="chart-canvas-wrapper">
+            <canvas id="chart-5m"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Historical View (1-hour aggregates, all time) -->
+      <div class="chart-container">
+        <div class="chart-header">
+          <h2>All Historical Data (1-hour intervals)</h2>
+          <p><em>Complete history with hourly aggregates</em></p>
+        </div>
+        <div class="chart-scroll-wrapper">
+          <div class="chart-canvas-wrapper">
+            <canvas id="chart-1h"></canvas>
+          </div>
+        </div>
+      </div>
+
+       <!-- Slope Trends -->
+       <div class="chart-container">
+        <div class="chart-header">
+          <h2>Consumption Rate Trends</h2>
+          <p><em>Water consumption rate (slope) for each detected segment over time</em></p>
+        </div>
+        <div class="chart-scroll-wrapper">
+          <div class="chart-canvas-wrapper">
+            <canvas id="chart-slopes"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- Segment Analysis: Consumption Periods with Extrema -->
+      <div class="chart-container">
+        <div class="chart-header">
+          <h2>Consumption Segments & Refill Events</h2>
+          <p><em>Detected consumption periods with linear fits, showing refill events (minima) and needs-refill points (maxima)</em></p>
+        </div>
+        <div class="chart-scroll-wrapper">
+          <div class="chart-canvas-wrapper">
+            <canvas id="chart-segments"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="info-section">
+        <h3>About</h3>
+        <p>
+          Water level data reflects the distance from water surface to a VL6180X time-of-flight laser interferometer distance ranging sensor situated at the rim of my Christmas tree stand. These readings are collected by an ESP8266 micocontroller and posted via wifi to an MQTT server on a Raspberry Pi on the local network. Separately, Yolink sensors collect water and air environmental readings and post them to a separate local MQTT server. A dockerized process on a Terramaster NAS observes the MQTT messages and writes them to a duckdb file. A separate docker process periodically queries the duckdb file, aggregates data into varying levels of precision, and analyzes changes in the rate of water consumption via a process that involves outlier removal, data smoothing, detection of local minima/maxima, and linear regression. The results are assembled into a JSON file, gzipped, and uploaded to S3 with appropriate ACLs using IAM best practices.
+        </p>
+        <p>
+            Raw data is expressed in millimeters; all volumetric measurements should be considered approximate.
+        </p>
+        <p>
+            Watering performed using <a href="https://www.amazon.com/dp/B0BGJP5YWW?ref=ppx_yo2ov_dt_b_fed_asin_title">Rocky Mountain Goods Christmas Tree Food</a>.
+        </p>
+          <span id="data-window"></span>
+        </p>
+        <p class="last-update">
+          Last updated: <span id="last-update-time">--</span>
+        </p>
+      </div>
+    </main>
+
+    <footer>
+      <p>Github</p>
+    </footer>
+  </div>
+
+</body>
+</html>
+

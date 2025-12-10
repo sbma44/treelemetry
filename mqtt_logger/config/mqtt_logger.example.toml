@@ -1,0 +1,79 @@
+# MQTT Logger Configuration Example
+# Copy this file to mqtt_logger.toml and customize for your environment
+
+[mqtt]
+# MQTT broker configuration
+broker = "localhost"
+port = 1883
+username = ""  # Optional: leave empty if no authentication required
+password = ""  # Optional: leave empty if no authentication required
+client_id = ""  # Optional: auto-generated if not specified
+keepalive = 60
+qos = 1  # Quality of Service: 0 (at most once), 1 (at least once), 2 (exactly once)
+
+[database]
+# DuckDB database configuration
+# NOTE: These defaults are optimized for Raspberry Pi / SD card longevity
+# Trade-off: Up to 5 minutes of data may be lost on unexpected shutdown
+# For SSD storage, consider: batch_size=100, flush_interval=10
+
+path = "data/mqtt_logs.db"
+
+# Batch size - number of messages to accumulate in memory before writing to disk
+# Higher values = fewer writes = better for SD cards, but more data loss risk
+# Current setting (5000): Aggressive SD card protection, ~5000 messages at risk
+# Alternative settings: 1000 (balanced), 100 (SSD/frequent writes)
+batch_size = 5000
+
+# Flush interval - seconds between forced disk writes
+# Higher values = less frequent writes = better for SD cards
+# Current setting (300): 5 minutes between writes, extends SD card life 50x
+# Alternative settings: 60 (1 min balanced), 10 (SSD/frequent writes)
+flush_interval = 300
+
+# Topic configurations
+# Each topic pattern maps to a database table
+[[topics]]
+pattern = "sensors/temperature/#"
+table_name = "temperature_sensors"
+description = "Temperature sensor readings"
+
+[[topics]]
+pattern = "sensors/humidity/#"
+table_name = "humidity_sensors"
+description = "Humidity sensor readings"
+
+[[topics]]
+pattern = "devices/+/status"
+table_name = "device_status"
+description = "Device status messages"
+
+[logging]
+# Logging configuration
+level = "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+file = ""  # Optional: leave empty for console only, or specify path like "logs/mqtt_logger.log"
+
+[alerting]
+# Email alerting for disk space monitoring (all optional, disabled by default)
+# Requires system mail command (e.g., msmtp package) to be configured
+
+# Email address to send alerts to (leave empty to disable alerting)
+email_to = ""
+
+# Alert when database file exceeds this size in MB (leave empty to disable)
+# Example: 1000 = alert when database exceeds 1GB
+db_size_threshold_mb = ""
+
+# Alert when free disk space drops below this in MB (leave empty to disable)
+# Example: 500 = alert when less than 500MB free space remains
+free_space_threshold_mb = ""
+
+# Hours to wait between repeat alerts (prevents alert spam)
+alert_cooldown_hours = 24
+
+# Example configuration (uncomment and modify):
+# email_to = "admin@example.com"
+# db_size_threshold_mb = 1000  # Alert when DB > 1GB
+# free_space_threshold_mb = 500  # Alert when < 500MB free
+

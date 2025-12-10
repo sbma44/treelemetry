@@ -1,0 +1,92 @@
+version: '3.8'
+
+# Treelemetry Docker Compose
+# 
+# Architecture: MQTT Logger → DuckDB → Uploader → S3
+#
+# This compose file runs both the MQTT Logger (data collection) and Uploader (S3 upload).
+# They share a DuckDB database via a named volume.
+
+services:
+  mqtt-logger:
+    build:
+      context: ./mqtt_logger
+      dockerfile: Dockerfile
+    container_name: mqtt-logger
+    environment:
+      # MQTT broker configuration (REQUIRED)
+      - MQTT_BROKER=${MQTT_BROKER}
+      - MQTT_PORT=${MQTT_PORT:-1883}
+      - MQTT_USERNAME=${MQTT_USERNAME:-}
+      - MQTT_PASSWORD=${MQTT_PASSWORD:-}
+      
+      # Topic configuration (colon-separated: pattern:table:description)
+      - TOPICS=${TOPICS:-xmas/tree/water/raw:water_level:Water level readings}
+      
+      # Database configuration
+      - DB_PATH=/app/data/mqtt_logs.db
+      - DB_BATCH_SIZE=${DB_BATCH_SIZE:-1000}
+      - DB_FLUSH_INTERVAL=${DB_FLUSH_INTERVAL:-60}
+      
+      # Optional: Email alerting
+      - ALERT_EMAIL_TO=${ALERT_EMAIL_TO:-}
+      - ALERT_DB_SIZE_MB=${ALERT_DB_SIZE_MB:-}
+      - ALERT_FREE_SPACE_MB=${ALERT_FREE_SPACE_MB:-}
+    volumes:
+      # Shared database volume (logger writes, uploader reads)
+      - mqtt-data:/app/data
+      - mqtt-logs:/app/logs
+    restart: unless-stopped
+
+  uploader:
+    build:
+      context: ./uploader
+      dockerfile: Dockerfile
+    container_name: treelemetry-uploader
+    environment:
+      # DuckDB configuration (reads from shared volume)
+      - DUCKDB_PATH=/data/mqtt_logs.db
+      
+      # S3 configuration (defaults set in Dockerfile)
+      - S3_BUCKET=${S3_BUCKET:-treelemetry-sbma44-water-data}
+      - S3_KEY=${S3_KEY:-water-level.json}
+      
+      # AWS credentials (REQUIRED - no defaults for security)
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      
+      # Optional tuning
+      - MINUTES_OF_DATA=${MINUTES_OF_DATA:-10}
+      - REPLAY_DELAY_SECONDS=${REPLAY_DELAY_SECONDS:-300}
+      - UPLOAD_INTERVAL_SECONDS=${UPLOAD_INTERVAL_SECONDS:-30}
+    volumes:
+      # Shared database volume (read-only to prevent lock conflicts)
+      - mqtt-data:/data:ro
+    depends_on:
+      - mqtt-logger
+    restart: unless-stopped
+
+volumes:
+  mqtt-data:  # Shared DuckDB database
+  mqtt-logs:  # MQTT Logger log files
+
+# Usage:
+#
+# 1. Create .env file with required variables:
+#    MQTT_BROKER=mqtt.example.com
+#    AWS_ACCESS_KEY_ID=xxx
+#    AWS_SECRET_ACCESS_KEY=yyy
+#
+# 2. Start all services:
+#    docker-compose up -d
+#
+# 3. View logs:
+#    docker-compose logs -f mqtt-logger
+#    docker-compose logs -f uploader
+#
+# 4. Stop all services:
+#    docker-compose down
+#
+# The logger captures MQTT messages and stores them in DuckDB.
+# The uploader reads the database and uploads aggregated data to S3 every 30s.
+
