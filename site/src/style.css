@@ -320,7 +320,6 @@ footer {
   text-align: center;
   padding: var(--spacing-lg) 0;
   color: var(--color-text-dim);
-  border-top: 1px solid var(--color-border);
 }
 
 /* Responsive Design */
