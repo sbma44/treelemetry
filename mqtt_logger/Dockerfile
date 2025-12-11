@@ -73,6 +73,11 @@ ENV MQTT_BROKER="localhost" \
     ALERT_DB_SIZE_MB="" \
     ALERT_FREE_SPACE_MB="" \
     ALERT_COOLDOWN_HOURS="24" \
+    YOLINK_UAID="" \
+    YOLINK_SECRET_KEY="" \
+    YOLINK_AIR_SENSOR_DEVICEID="" \
+    YOLINK_WATER_SENSOR_DEVICEID="" \
+    YOLINK_TABLE_NAME="yolink_sensors" \
     TZ="UTC"
 
 # Run entrypoint script

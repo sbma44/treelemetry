@@ -8,9 +8,10 @@ import time
 from pathlib import Path
 
 from .alerting import AlertManager
-from .config import Config, load_config
+from .config import load_config
 from .mqtt_client import MQTTLogger
 from .storage import MessageStore
+from .yolink_client import YoLinkClient
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class MQTTLoggerApp:
         self.store: MessageStore | None = None
         self.mqtt_client: MQTTLogger | None = None
         self.alert_manager: AlertManager | None = None
+        self.yolink_client: YoLinkClient | None = None
         self._running = False
         self._shutdown_event = threading.Event()
 
@@ -156,7 +158,7 @@ class MQTTLoggerApp:
             return False
 
         # Check each level
-        for topic_part, pattern_part in zip(topic_parts, pattern_parts):
+        for topic_part, pattern_part in zip(topic_parts, pattern_parts, strict=True):
             if pattern_part != "+" and pattern_part != topic_part:
                 return False
 
@@ -199,6 +201,85 @@ class MQTTLoggerApp:
             db_size_threshold_mb=self.config.alerting.db_size_threshold_mb,
             free_space_threshold_mb=self.config.alerting.free_space_threshold_mb,
             alert_cooldown_hours=self.config.alerting.alert_cooldown_hours,
+        )
+
+    def _handle_yolink_sensor(
+        self,
+        device_type: str,
+        temperature: float,
+        humidity: float | None,
+        device_id: str,
+        raw_data: dict,
+    ) -> None:
+        """Handle incoming YoLink sensor data.
+
+        Args:
+            device_type: "air" or "water"
+            temperature: Temperature reading (Fahrenheit)
+            humidity: Humidity percentage (None for water sensor)
+            device_id: The YoLink device ID
+            raw_data: Complete raw message payload
+        """
+        import json
+
+        if not self.store:
+            return
+
+        table_name = self.config.yolink.table_name
+
+        # Create a synthetic topic for storage compatibility
+        topic = f"yolink/{device_type}/{device_id}"
+
+        # Build the payload to store
+        # Include parsed values for easy querying
+        stored_payload = {
+            "device_type": device_type,
+            "device_id": device_id,
+            "temperature": temperature,
+            "humidity": humidity,
+            "battery": raw_data.get("data", {}).get("battery"),
+            "signal": raw_data.get("data", {}).get("loraInfo", {}).get("signal"),
+            "event_time": raw_data.get("time"),
+            "raw": raw_data,
+        }
+
+        try:
+            self.store.insert_message(
+                table_name,
+                topic,
+                json.dumps(stored_payload).encode("utf-8"),
+                qos=1,
+                retain=False,
+            )
+            logger.info(
+                f"YoLink {device_type} sensor: temp={temperature}°F"
+                + (f", humidity={humidity}%" if humidity is not None else "")
+            )
+        except Exception as e:
+            logger.error(f"Failed to store YoLink sensor data: {e}")
+
+    def _initialize_yolink(self) -> None:
+        """Initialize the YoLink client if configured."""
+        if not self.config.yolink.enabled:
+            logger.info("YoLink integration is disabled")
+            return
+
+        if not self.config.yolink.uaid or not self.config.yolink.secret_key:
+            logger.info("YoLink credentials not configured, skipping")
+            return
+
+        # Create the YoLink sensor data table
+        if self.store:
+            self.store.create_table(self.config.yolink.table_name)
+            logger.info(
+                f"YoLink table '{self.config.yolink.table_name}' ready "
+                f"for devices: air={self.config.yolink.air_sensor_device_id}, "
+                f"water={self.config.yolink.water_sensor_device_id}"
+            )
+
+        self.yolink_client = YoLinkClient(
+            self.config.yolink,
+            self._handle_yolink_sensor,
         )
 
     def _send_startup_notification(self) -> None:
@@ -249,6 +330,12 @@ Email Alerts:
   Free Space Threshold: {self.config.alerting.free_space_threshold_mb or '(disabled)'} MB
   Cooldown: {self.config.alerting.alert_cooldown_hours} hours
 
+YoLink Integration:
+  Enabled: {self.config.yolink.enabled}
+  Air Sensor: {self.config.yolink.air_sensor_device_id or '(not configured)'}
+  Water Sensor: {self.config.yolink.water_sensor_device_id or '(not configured)'}
+  Table: {self.config.yolink.table_name}
+
 This notification confirms that MQTT Logger started successfully with the
 configuration values shown above (including any environment variable overrides).
 
@@ -292,6 +379,9 @@ This is an automated notification.
             logger.info("Initializing alerting...")
             self._initialize_alerting()
 
+            logger.info("Initializing YoLink client...")
+            self._initialize_yolink()
+
             # Send startup notification email
             self._send_startup_notification()
 
@@ -302,6 +392,10 @@ This is an automated notification.
                 name="FlushThread",
             )
             flush_thread.start()
+
+            # Start YoLink client if configured
+            if self.yolink_client:
+                self.yolink_client.start()
 
             # Connect to MQTT broker
             if self.mqtt_client:
@@ -335,6 +429,13 @@ This is an automated notification.
                 self.mqtt_client.disconnect()
             except Exception as e:
                 logger.error(f"Error disconnecting MQTT: {e}")
+
+        # Stop YoLink client
+        if self.yolink_client:
+            try:
+                self.yolink_client.stop()
+            except Exception as e:
+                logger.error(f"Error stopping YoLink client: {e}")
 
         self._shutdown_event.set()
 

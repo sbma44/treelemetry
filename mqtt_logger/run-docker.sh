@@ -30,9 +30,14 @@ CMD="docker run -d \
   --name xmas-mqtt-logger \
   --restart unless-stopped \
   -v $DATA_DIR:/app/data \
-  -v $LOGS_DIR:/app/logs \
-  -e TZ=$(date +%Z) \
-  -e MQTT_BROKER=$MQTT_BROKER"
+  -v $LOGS_DIR:/app/logs -e TZ=$(date +%Z) \
+  -e MQTT_BROKER=$MQTT_BROKER \
+  -e DB_BATCH_SIZE=100 \
+  -e DB_FLUSH_INTERVAL=30
+  -e YOLINK_UAID=ua_1234 \
+  -e YOLINK_SECRET_KEY=shhhh \
+  -e YOLINK_AIR_SENSOR_DEVICEID=abcdef122 \
+  -e YOLINK_WATER_SENSOR_DEVICEID=abcdef123"
 
 # Add optional parameters
 [ -n "$MQTT_USERNAME" ] && CMD="$CMD -e MQTT_USERNAME=$MQTT_USERNAME"

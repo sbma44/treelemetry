@@ -77,3 +77,40 @@ alert_cooldown_hours = 24
 # db_size_threshold_mb = 1000  # Alert when DB > 1GB
 # free_space_threshold_mb = 500  # Alert when < 500MB free
 
+[yolink]
+# YoLink sensor integration (optional, disabled by default)
+# Enable this to receive temperature/humidity data from YoLink sensors
+
+# Enable/disable YoLink integration (auto-enabled if uaid and secret_key are set)
+enabled = false
+
+# YoLink User Access ID (UAID) - get from YoLink app: Settings > Account > Advanced Settings > User Access Credentials
+uaid = ""
+
+# YoLink Secret Key - get from YoLink app along with UAID
+secret_key = ""
+
+# Device ID for air temperature/humidity sensor (optional)
+# This sensor reports both temperature and humidity
+air_sensor_device_id = ""
+
+# Device ID for water temperature sensor (optional)
+# This sensor reports temperature only (humidity is always 0 and ignored)
+water_sensor_device_id = ""
+
+# Table name for storing YoLink sensor data
+table_name = "yolink_sensors"
+
+# Reconnect delay in seconds (for automatic reconnection on disconnection)
+reconnect_delay = 5
+
+# Maximum reconnect delay in seconds (exponential backoff cap)
+max_reconnect_delay = 300
+
+# Example configuration (uncomment and modify):
+# enabled = true
+# uaid = "your_uaid_here"
+# secret_key = "your_secret_key_here"
+# air_sensor_device_id = "d88b4c04000a9da6"
+# water_sensor_device_id = "d88b4c010008bbe2"
+

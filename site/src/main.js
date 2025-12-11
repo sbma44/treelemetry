@@ -19,6 +19,11 @@ let aggregatedData = {
   agg_5m: null,
   agg_1h: null,
 };
+let yolinkSensorData = {
+  agg_1m: null,
+  agg_5m: null,
+  agg_1h: null,
+};
 let analysisData = null; // Segment analysis data
 let currentUnit = 'mm'; // 'mm' or 'mL'
 let replayInterval = null;
@@ -46,6 +51,20 @@ const elements = {
 };
 
 /**
+ * Scroll all chart scroll wrappers to the right to show most recent data
+ * This is especially important on mobile where the chart may be clipped
+ */
+function scrollChartsToRight() {
+  const scrollWrappers = document.querySelectorAll('.chart-scroll-wrapper');
+  scrollWrappers.forEach(wrapper => {
+    // Only scroll if content is wider than container (i.e., scrolling is needed)
+    if (wrapper.scrollWidth > wrapper.clientWidth) {
+      wrapper.scrollLeft = wrapper.scrollWidth - wrapper.clientWidth;
+    }
+  });
+}
+
+/**
  * Convert mm to mL using the formula: mL = -25.125 * mm
  */
 function mmToML(mm) {
@@ -57,6 +76,13 @@ function mmToML(mm) {
  */
 function mlToMM(ml) {
   return ml / -25.125;
+}
+
+/**
+ * Convert Celsius to Fahrenheit
+ */
+function celsiusToFahrenheit(celsius) {
+  return celsius * 9 / 5 + 32;
 }
 
 /**
@@ -138,6 +164,20 @@ async function fetchData() {
       }
     } else {
       console.warn('No analysis data in JSON response');
+    }
+
+    // Store yolink sensor data if available
+    if (data.yolink_sensors) {
+      if (data.yolink_sensors.agg_1m) {
+        yolinkSensorData.agg_1m = data.yolink_sensors.agg_1m;
+      }
+      if (data.yolink_sensors.agg_5m) {
+        yolinkSensorData.agg_5m = data.yolink_sensors.agg_5m;
+      }
+      if (data.yolink_sensors.agg_1h) {
+        yolinkSensorData.agg_1h = data.yolink_sensors.agg_1h;
+      }
+      console.log('Yolink sensor data loaded');
     }
 
     return data;
@@ -311,7 +351,7 @@ function createAggregatedChart(canvasElement, title) {
       labels: [],
       datasets: [
         {
-          label: 'Mean',
+          label: 'Water Level (Mean)',
           data: [],
           borderColor: 'rgba(129, 140, 248, 0.8)',
           backgroundColor: 'rgba(129, 140, 248, 0.3)',
@@ -326,9 +366,10 @@ function createAggregatedChart(canvasElement, title) {
           pointBackgroundColor: 'rgba(129, 140, 248, 0.8)',
           pointBorderColor: '#0f1419',
           pointBorderWidth: 2,
+          yAxisID: 'y',
         },
         {
-          label: 'Min',
+          label: 'Water Level (Min)',
           data: [],
           borderColor: 'hsl(162, 69%, 40%)',
           backgroundColor: 'rgba(129, 140, 248, 0.1)',
@@ -338,9 +379,10 @@ function createAggregatedChart(canvasElement, title) {
           fill: false,
           pointRadius: 0,
           pointHoverRadius: 4,
+          yAxisID: 'y',
         },
         {
-          label: 'Max',
+          label: 'Water Level (Max)',
           data: [],
           borderColor: '#dd4444',
           backgroundColor: 'rgba(244, 114, 182, 0.1)',
@@ -350,6 +392,48 @@ function createAggregatedChart(canvasElement, title) {
           fill: false,
           pointRadius: 0,
           pointHoverRadius: 4,
+          yAxisID: 'y',
+        },
+        // Temperature and humidity datasets (right Y axis)
+        {
+          label: 'Water Temp',
+          data: [],
+          borderColor: 'rgba(59, 130, 246, 0.9)',  // Blue
+          backgroundColor: 'rgba(59, 130, 246, 0.1)',
+          borderWidth: 2,
+          tension: 0.4,
+          fill: false,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+          pointBackgroundColor: 'rgba(59, 130, 246, 0.9)',
+          yAxisID: 'yRight',
+        },
+        {
+          label: 'Air Temp',
+          data: [],
+          borderColor: '#dd4444',
+          backgroundColor: '#dd4444',
+          borderWidth: 2,
+          tension: 0.4,
+          fill: false,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+          pointBackgroundColor: '#dd4444',
+          yAxisID: 'yRight',
+        },
+        {
+          label: 'Humidity',
+          data: [],
+          borderColor: 'hsl(162, 69%, 40%)',  // pine
+          backgroundColor: 'hsl(162, 69%, 40%)',
+          borderWidth: 2,
+          borderDash: [3, 3],
+          tension: 0.4,
+          fill: false,
+          pointRadius: 2,
+          pointHoverRadius: 4,
+          pointBackgroundColor: 'hsl(162, 69%, 40%)',
+          yAxisID: 'yHumidity',
         },
       ],
     },
@@ -383,9 +467,15 @@ function createAggregatedChart(canvasElement, title) {
           displayColors: true,
           callbacks: {
             label: function(context) {
-              const unit = getUnitLabel();
               const label = context.dataset.label || '';
-              return `${label}: ${context.parsed.y.toFixed(2)} ${unit}`;
+              const yAxisID = context.dataset.yAxisID;
+              let unit = getUnitLabel();
+              if (yAxisID === 'yRight') {
+                unit = '°F';
+              } else if (yAxisID === 'yHumidity') {
+                unit = '%';
+              }
+              return `${label}: ${context.parsed.y.toFixed(1)} ${unit}`;
             },
           },
         },
@@ -413,6 +503,7 @@ function createAggregatedChart(canvasElement, title) {
           },
         },
         y: {
+          position: 'left',
           min: 0,
           max: 50,
           reverse: true,
@@ -435,6 +526,56 @@ function createAggregatedChart(canvasElement, title) {
             },
           },
         },
+        yRight: {
+          position: 'right',
+          min: 50,
+          max: 80,
+          reverse: false,  // Conventional direction - higher on top
+          grid: {
+            drawOnChartArea: false,  // Don't draw grid lines for this axis
+          },
+          ticks: {
+            color: '#dd4444',
+            callback: function(value) {
+              return value.toFixed(0) + '°F';
+            },
+          },
+          title: {
+            display: true,
+            text: 'Temperature (°F)',
+            color: '#dd4444',
+            font: {
+              size: 11,
+            },
+          },
+        },
+        yHumidity: {
+          position: 'right',
+          min: 20,
+          max: 80,
+          reverse: false,  // Conventional direction - higher on top
+          grid: {
+            drawOnChartArea: false,
+          },
+          ticks: {
+            color: 'hsl(162, 69%, 40%)',  // Purple to match humidity
+            callback: function(value) {
+              return value.toFixed(0) + '%';
+            },
+          },
+          title: {
+            display: true,
+            text: 'Humidity (%)',
+            color: 'hsl(162, 69%, 40%)',
+            font: {
+              size: 11,
+            },
+          },
+          // Offset this axis so it doesn't overlap with temperature axis
+          afterFit: function(axis) {
+            axis.paddingLeft = 10;
+          },
+        },
       },
     },
     plugins: [], // No pulsing plugin for aggregated charts
@@ -444,12 +585,12 @@ function createAggregatedChart(canvasElement, title) {
 /**
  * Update aggregated chart with data
  */
-function updateAggregatedChart(chartInstance, aggData) {
+function updateAggregatedChart(chartInstance, aggData, sensorData = null) {
   if (!chartInstance || !aggData || !aggData.data) return;
 
   const data = aggData.data;
 
-  // Convert timestamps and values
+  // Convert timestamps and values for water level
   const timestamps = data.map(d => new Date(d.t));
   const means = data.map(d => convertValue(d.m));
   const mins = data.map(d => convertValue(d.min));
@@ -459,6 +600,99 @@ function updateAggregatedChart(chartInstance, aggData) {
   chartInstance.data.datasets[0].data = means;
   chartInstance.data.datasets[1].data = mins;
   chartInstance.data.datasets[2].data = maxs;
+
+  // Update temperature and humidity data if available
+  if (sensorData) {
+    // Build lookup maps for sensor data by timestamp
+    const waterTempMap = new Map();
+    const airTempMap = new Map();
+    const humidityMap = new Map();
+
+    if (sensorData.water) {
+      sensorData.water.forEach(d => {
+        if (d.temp && d.temp.m !== undefined) {
+          waterTempMap.set(d.t, celsiusToFahrenheit(d.temp.m));
+        }
+      });
+    }
+
+    if (sensorData.air) {
+      sensorData.air.forEach(d => {
+        if (d.temp && d.temp.m !== undefined) {
+          airTempMap.set(d.t, celsiusToFahrenheit(d.temp.m));
+        }
+        if (d.humidity && d.humidity.m !== undefined) {
+          humidityMap.set(d.t, d.humidity.m);
+        }
+      });
+    }
+
+    // Map sensor data to chart timestamps (use {x, y} format for sparse data)
+    const waterTempData = [];
+    const airTempData = [];
+    const humidityData = [];
+
+    // Add data points from sensor data (using their own timestamps)
+    if (sensorData.water) {
+      sensorData.water.forEach(d => {
+        if (d.temp && d.temp.m !== undefined) {
+          waterTempData.push({
+            x: new Date(d.t),
+            y: celsiusToFahrenheit(d.temp.m)
+          });
+        }
+      });
+    }
+
+    if (sensorData.air) {
+      sensorData.air.forEach(d => {
+        if (d.temp && d.temp.m !== undefined) {
+          airTempData.push({
+            x: new Date(d.t),
+            y: celsiusToFahrenheit(d.temp.m)
+          });
+        }
+        if (d.humidity && d.humidity.m !== undefined) {
+          humidityData.push({
+            x: new Date(d.t),
+            y: d.humidity.m
+          });
+        }
+      });
+    }
+
+    // Update datasets (indices 3, 4, 5 are water temp, air temp, humidity)
+    chartInstance.data.datasets[3].data = waterTempData;
+    chartInstance.data.datasets[4].data = airTempData;
+    chartInstance.data.datasets[5].data = humidityData;
+
+    // Auto-scale temperature axis based on data
+    if (waterTempData.length > 0 || airTempData.length > 0) {
+      const allTemps = [...waterTempData, ...airTempData].map(d => d.y);
+      if (allTemps.length > 0) {
+        const minTemp = Math.floor(Math.min(...allTemps) - 5);
+        const maxTemp = Math.ceil(Math.max(...allTemps) + 5);
+        chartInstance.options.scales.yRight.min = minTemp;
+        chartInstance.options.scales.yRight.max = maxTemp;
+      }
+    }
+
+    // Auto-scale humidity axis based on data
+    if (humidityData.length > 0) {
+      const allHumidity = humidityData.map(d => d.y);
+      const minHum = Math.floor(Math.min(...allHumidity) - 5);
+      const maxHum = Math.ceil(Math.max(...allHumidity) + 5);
+      chartInstance.options.scales.yHumidity.min = Math.max(0, minHum);
+      chartInstance.options.scales.yHumidity.max = Math.min(100, maxHum);
+    }
+
+    console.log(`Sensor data: ${waterTempData.length} water temp, ${airTempData.length} air temp, ${humidityData.length} humidity points`);
+  } else {
+    // Clear sensor data if not available
+    chartInstance.data.datasets[3].data = [];
+    chartInstance.data.datasets[4].data = [];
+    chartInstance.data.datasets[5].data = [];
+  }
 
   // Update y-axis configuration
   const yAxis = chartInstance.options.scales.y;
@@ -1051,10 +1285,10 @@ function switchUnit(newUnit) {
   // Update all charts and stats
   updateChart();
   if (chart5m && aggregatedData.agg_5m) {
-    updateAggregatedChart(chart5m, aggregatedData.agg_5m);
+    updateAggregatedChart(chart5m, aggregatedData.agg_5m, yolinkSensorData.agg_5m);
   }
   if (chart1h && aggregatedData.agg_1h) {
-    updateAggregatedChart(chart1h, aggregatedData.agg_1h);
+    updateAggregatedChart(chart1h, aggregatedData.agg_1h, yolinkSensorData.agg_1h);
   }
   if (chartSegments && analysisData) {
     updateSegmentsChart();
@@ -1132,14 +1366,19 @@ async function refreshData() {
 
       // Immediately check if any should be visible
       updateVisibleData();
+
+      // Scroll charts to show new data (important for mobile)
+      requestAnimationFrame(() => {
+        scrollChartsToRight();
+      });
     }
 
     // Update aggregated charts with fresh data
     if (chart5m && aggregatedData.agg_5m) {
-      updateAggregatedChart(chart5m, aggregatedData.agg_5m);
+      updateAggregatedChart(chart5m, aggregatedData.agg_5m, yolinkSensorData.agg_5m);
     }
     if (chart1h && aggregatedData.agg_1h) {
-      updateAggregatedChart(chart1h, aggregatedData.agg_1h);
+      updateAggregatedChart(chart1h, aggregatedData.agg_1h, yolinkSensorData.agg_1h);
     }
 
     // Update analysis charts if new data available
@@ -1221,11 +1460,11 @@ async function loadData() {
 
     // Update aggregated charts
     if (chart5m && aggregatedData.agg_5m) {
-      updateAggregatedChart(chart5m, aggregatedData.agg_5m);
+      updateAggregatedChart(chart5m, aggregatedData.agg_5m, yolinkSensorData.agg_5m);
       console.log(`5-minute aggregates: ${aggregatedData.agg_5m.data.length} points`);
     }
     if (chart1h && aggregatedData.agg_1h) {
-      updateAggregatedChart(chart1h, aggregatedData.agg_1h);
+      updateAggregatedChart(chart1h, aggregatedData.agg_1h, yolinkSensorData.agg_1h);
       console.log(`1-hour aggregates: ${aggregatedData.agg_1h.data.length} points`);
     }
 
@@ -1260,6 +1499,12 @@ async function loadData() {
     // Show main content
     elements.loading.style.display = 'none';
     elements.mainContent.style.display = 'block';
+
+    // Scroll charts to show most recent data (important for mobile)
+    // Use requestAnimationFrame to ensure DOM is rendered first
+    requestAnimationFrame(() => {
+      scrollChartsToRight();
+    });
 
     // Start the replay timer
     if (!replayInterval) {

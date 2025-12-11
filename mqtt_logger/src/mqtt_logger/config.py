@@ -1,15 +1,9 @@
 """Configuration management for MQTT Logger."""
 
 import os
-import sys
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    import tomli as tomllib
 
 
 @dataclass
@@ -98,6 +92,31 @@ class AlertingConfig:
 
 
 @dataclass
+class YoLinkConfig:
+    """YoLink integration configuration.
+
+    Attributes:
+        enabled: Whether YoLink integration is enabled
+        uaid: YoLink User Access ID (UAID)
+        secret_key: YoLink Secret Key
+        air_sensor_device_id: Device ID for the air temperature/humidity sensor
+        water_sensor_device_id: Device ID for the water temperature sensor
+        table_name: DuckDB table name for storing YoLink sensor data
+        reconnect_delay: Seconds to wait before reconnecting after disconnection
+        max_reconnect_delay: Maximum reconnect delay (exponential backoff cap)
+    """
+
+    enabled: bool = False
+    uaid: str | None = None
+    secret_key: str | None = None
+    air_sensor_device_id: str | None = None
+    water_sensor_device_id: str | None = None
+    table_name: str = "yolink_sensors"
+    reconnect_delay: int = 5
+    max_reconnect_delay: int = 300
+
+
+@dataclass
 class Config:
     """Main application configuration.
 
@@ -107,6 +126,7 @@ class Config:
         topics: List of topic configurations
         logging: Logging configuration
         alerting: Alerting configuration (optional)
+        yolink: YoLink integration configuration (optional)
     """
 
     mqtt: MQTTConfig
@@ -114,6 +134,7 @@ class Config:
     topics: list[TopicConfig]
     logging: LoggingConfig
     alerting: AlertingConfig
+    yolink: YoLinkConfig
 
 
 def load_config(config_path: Path | str) -> Config:
@@ -223,11 +244,38 @@ def load_config(config_path: Path | str) -> Config:
 
     alerting_config = AlertingConfig(**alerting_data)
 
+    # Parse YoLink config (optional)
+    yolink_data = data.get("yolink", {})
+
+    # Override with environment variables if set
+    if os.getenv("YOLINK_UAID"):
+        yolink_data["uaid"] = os.getenv("YOLINK_UAID")
+        yolink_data["enabled"] = True
+    if os.getenv("YOLINK_SECRET_KEY"):
+        yolink_data["secret_key"] = os.getenv("YOLINK_SECRET_KEY")
+    if os.getenv("YOLINK_AIR_SENSOR_DEVICEID"):
+        yolink_data["air_sensor_device_id"] = os.getenv("YOLINK_AIR_SENSOR_DEVICEID")
+    if os.getenv("YOLINK_WATER_SENSOR_DEVICEID"):
+        yolink_data["water_sensor_device_id"] = os.getenv("YOLINK_WATER_SENSOR_DEVICEID")
+    if os.getenv("YOLINK_TABLE_NAME"):
+        yolink_data["table_name"] = os.getenv("YOLINK_TABLE_NAME")
+    if os.getenv("YOLINK_RECONNECT_DELAY"):
+        yolink_data["reconnect_delay"] = int(os.getenv("YOLINK_RECONNECT_DELAY"))
+    if os.getenv("YOLINK_MAX_RECONNECT_DELAY"):
+        yolink_data["max_reconnect_delay"] = int(os.getenv("YOLINK_MAX_RECONNECT_DELAY"))
+
+    # Auto-enable if credentials are provided
+    if yolink_data.get("uaid") and yolink_data.get("secret_key"):
+        yolink_data["enabled"] = True
+
+    yolink_config = YoLinkConfig(**yolink_data)
+
     return Config(
         mqtt=mqtt_config,
         database=database_config,
         topics=topics,
         logging=logging_config,
         alerting=alerting_config,
+        yolink=yolink_config,
     )
 

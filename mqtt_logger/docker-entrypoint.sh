@@ -84,6 +84,29 @@ fi
 
 echo "alert_cooldown_hours = ${ALERT_COOLDOWN_HOURS}" >> "$CONFIG_FILE"
 
+# Add YoLink configuration if UAID is set
+if [ -n "$YOLINK_UAID" ]; then
+    cat >> "$CONFIG_FILE" <<EOF
+
+[yolink]
+enabled = true
+uaid = "${YOLINK_UAID}"
+secret_key = "${YOLINK_SECRET_KEY}"
+EOF
+
+    if [ -n "$YOLINK_AIR_SENSOR_DEVICEID" ]; then
+        echo "air_sensor_device_id = \"${YOLINK_AIR_SENSOR_DEVICEID}\"" >> "$CONFIG_FILE"
+    fi
+
+    if [ -n "$YOLINK_WATER_SENSOR_DEVICEID" ]; then
+        echo "water_sensor_device_id = \"${YOLINK_WATER_SENSOR_DEVICEID}\"" >> "$CONFIG_FILE"
+    fi
+
+    if [ -n "$YOLINK_TABLE_NAME" ]; then
+        echo "table_name = \"${YOLINK_TABLE_NAME}\"" >> "$CONFIG_FILE"
+    fi
+fi
+
 echo "Configuration generated successfully:"
 echo "----------------------------------------"
 cat "$CONFIG_FILE"

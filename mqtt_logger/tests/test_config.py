@@ -12,6 +12,7 @@ from src.mqtt_logger.config import (
     LoggingConfig,
     MQTTConfig,
     TopicConfig,
+    YoLinkConfig,
     load_config,
 )
 
@@ -386,5 +387,190 @@ table_name = "test"
         os.environ.pop("DB_BATCH_SIZE", None)
         os.environ.pop("DB_FLUSH_INTERVAL", None)
         os.environ.pop("MQTT_PORT", None)
+        Path(config_path).unlink()
+
+
+def test_yolink_config_defaults():
+    """Test YoLinkConfig with defaults."""
+    config = YoLinkConfig()
+    assert config.enabled is False
+    assert config.uaid is None
+    assert config.secret_key is None
+    assert config.air_sensor_device_id is None
+    assert config.water_sensor_device_id is None
+    assert config.table_name == "yolink_sensors"
+    assert config.reconnect_delay == 5
+    assert config.max_reconnect_delay == 300
+
+
+def test_yolink_config_custom():
+    """Test YoLinkConfig with custom values."""
+    config = YoLinkConfig(
+        enabled=True,
+        uaid="test_uaid",
+        secret_key="test_secret",
+        air_sensor_device_id="air123",
+        water_sensor_device_id="water456",
+        table_name="custom_table",
+        reconnect_delay=10,
+        max_reconnect_delay=600,
+    )
+    assert config.enabled is True
+    assert config.uaid == "test_uaid"
+    assert config.secret_key == "test_secret"
+    assert config.air_sensor_device_id == "air123"
+    assert config.water_sensor_device_id == "water456"
+    assert config.table_name == "custom_table"
+    assert config.reconnect_delay == 10
+    assert config.max_reconnect_delay == 600
+
+
+def test_load_config_with_yolink():
+    """Test loading configuration with yolink section."""
+    config_content = """
+[mqtt]
+broker = "localhost"
+
+[database]
+path = "test.db"
+
+[[topics]]
+pattern = "test/#"
+table_name = "test"
+
+[yolink]
+enabled = true
+uaid = "test_uaid"
+secret_key = "test_secret"
+air_sensor_device_id = "air123"
+water_sensor_device_id = "water456"
+table_name = "yolink_data"
+"""
+    
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False) as f:
+        f.write(config_content)
+        config_path = f.name
+    
+    try:
+        config = load_config(config_path)
+        
+        assert config.yolink.enabled is True
+        assert config.yolink.uaid == "test_uaid"
+        assert config.yolink.secret_key == "test_secret"
+        assert config.yolink.air_sensor_device_id == "air123"
+        assert config.yolink.water_sensor_device_id == "water456"
+        assert config.yolink.table_name == "yolink_data"
+        
+    finally:
+        Path(config_path).unlink()
+
+
+def test_load_config_yolink_defaults():
+    """Test loading configuration without yolink section uses defaults."""
+    config_content = """
+[mqtt]
+broker = "localhost"
+
+[database]
+path = "test.db"
+
+[[topics]]
+pattern = "test/#"
+table_name = "test"
+"""
+    
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False) as f:
+        f.write(config_content)
+        config_path = f.name
+    
+    try:
+        config = load_config(config_path)
+        
+        # Should have default YoLink config
+        assert config.yolink.enabled is False
+        assert config.yolink.uaid is None
+        assert config.yolink.table_name == "yolink_sensors"
+        
+    finally:
+        Path(config_path).unlink()
+
+
+def test_load_config_yolink_env_var_override():
+    """Test that YoLink environment variables override TOML values."""
+    import os
+    
+    config_content = """
+[mqtt]
+broker = "localhost"
+
+[database]
+path = "test.db"
+
+[[topics]]
+pattern = "test/#"
+table_name = "test"
+"""
+    
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False) as f:
+        f.write(config_content)
+        config_path = f.name
+    
+    try:
+        # Set environment variables
+        os.environ["YOLINK_UAID"] = "env_uaid"
+        os.environ["YOLINK_SECRET_KEY"] = "env_secret"
+        os.environ["YOLINK_AIR_SENSOR_DEVICEID"] = "env_air123"
+        os.environ["YOLINK_WATER_SENSOR_DEVICEID"] = "env_water456"
+        os.environ["YOLINK_TABLE_NAME"] = "env_table"
+        
+        config = load_config(config_path)
+        
+        # Verify env vars enable and configure YoLink
+        assert config.yolink.enabled is True  # Auto-enabled when credentials provided
+        assert config.yolink.uaid == "env_uaid"
+        assert config.yolink.secret_key == "env_secret"
+        assert config.yolink.air_sensor_device_id == "env_air123"
+        assert config.yolink.water_sensor_device_id == "env_water456"
+        assert config.yolink.table_name == "env_table"
+        
+    finally:
+        # Clean up environment variables
+        os.environ.pop("YOLINK_UAID", None)
+        os.environ.pop("YOLINK_SECRET_KEY", None)
+        os.environ.pop("YOLINK_AIR_SENSOR_DEVICEID", None)
+        os.environ.pop("YOLINK_WATER_SENSOR_DEVICEID", None)
+        os.environ.pop("YOLINK_TABLE_NAME", None)
+        Path(config_path).unlink()
+
+
+def test_load_config_yolink_auto_enable():
+    """Test that YoLink is auto-enabled when credentials are provided."""
+    config_content = """
+[mqtt]
+broker = "localhost"
+
+[database]
+path = "test.db"
+
+[[topics]]
+pattern = "test/#"
+table_name = "test"
+
+[yolink]
+uaid = "test_uaid"
+secret_key = "test_secret"
+"""
+    
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".toml", delete=False) as f:
+        f.write(config_content)
+        config_path = f.name
+    
+    try:
+        config = load_config(config_path)
+        
+        # Should be auto-enabled when credentials are provided
+        assert config.yolink.enabled is True
+        
+    finally:
         Path(config_path).unlink()
 

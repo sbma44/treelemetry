@@ -224,6 +224,126 @@ def query_aggregated_data(
         raise
 
 
+def query_yolink_aggregated_data(
+    db_path: Path,
+    interval_minutes: int,
+    lookback_hours: int | None,
+) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Query aggregated YoLink sensor data (temperature/humidity) with statistical measures.
+
+    Args:
+        db_path: Path to the DuckDB database file
+        interval_minutes: Aggregation interval in minutes (e.g., 1, 5, 60)
+        lookback_hours: How far back to query (e.g., 1, 24, or None for all data)
+
+    Returns:
+        Dictionary with 'air' and 'water' keys, each containing a list of
+        aggregated measurement dictionaries with temperature (and humidity for air).
+    """
+    try:
+        conn = get_db_connection(db_path)
+
+        # Check if yolink_sensors table exists
+        tables = conn.execute("SHOW TABLES").fetchall()
+        table_names = [t[0] for t in tables]
+        if "yolink_sensors" not in table_names:
+            conn.close()
+            return {"air": [], "water": []}
+
+        # Build the time window constraint
+        if lookback_hours is not None:
+            time_filter = f"timestamp >= latest.max_ts - INTERVAL '{lookback_hours} hours'"
+        else:
+            time_filter = "1=1"  # No time filter, get all data
+
+        results = {"air": [], "water": []}
+
+        for device_type in ["air", "water"]:
+            # Query to aggregate YoLink sensor data
+            # The payload is JSON stored as VARCHAR with structure:
+            # {"device_type": "air/water", "temperature": float, "humidity": float|null, ...}
+            query = f"""
+            WITH latest AS (
+                SELECT MAX(timestamp) as max_ts
+                FROM yolink_sensors
+            ),
+            parsed AS (
+                SELECT
+                    timestamp,
+                    json_extract(payload, '$.temperature')::DOUBLE as temperature,
+                    json_extract(payload, '$.humidity')::DOUBLE as humidity
+                FROM yolink_sensors, latest
+                WHERE {time_filter}
+                AND topic LIKE 'yolink/{device_type}/%'
+                AND payload IS NOT NULL
+            )
+            SELECT
+                time_bucket(INTERVAL '{interval_minutes} minutes', timestamp) as bucket_time,
+                AVG(temperature) as temp_mean,
+                STDDEV_POP(temperature) as temp_stddev,
+                MIN(temperature) as temp_min,
+                MAX(temperature) as temp_max,
+                AVG(humidity) as humidity_mean,
+                STDDEV_POP(humidity) as humidity_stddev,
+                MIN(humidity) as humidity_min,
+                MAX(humidity) as humidity_max,
+                COUNT(*) as count
+            FROM parsed
+            WHERE temperature IS NOT NULL
+            GROUP BY bucket_time
+            ORDER BY bucket_time ASC
+            """
+
+            result = conn.execute(query).fetchall()
+
+            aggregates = []
+            for row in result:
+                bucket_time = row[0]
+                temp_mean = row[1]
+                temp_stddev = row[2]
+                temp_min = row[3]
+                temp_max = row[4]
+                humidity_mean = row[5]
+                humidity_stddev = row[6]
+                humidity_min = row[7]
+                humidity_max = row[8]
+                count = row[9]
+
+                # Only include if we have valid temperature data
+                if temp_mean is not None:
+                    entry = {
+                        "t": bucket_time.isoformat() if hasattr(bucket_time, 'isoformat') else str(bucket_time),
+                        "temp": {
+                            "m": round(float(temp_mean), 2),
+                            "s": round(float(temp_stddev), 3) if temp_stddev is not None else 0,
+                            "min": round(float(temp_min), 2),
+                            "max": round(float(temp_max), 2),
+                        },
+                        "n": int(count),
+                    }
+
+                    # Only include humidity for air sensor (and if we have valid data)
+                    if device_type == "air" and humidity_mean is not None:
+                        entry["humidity"] = {
+                            "m": round(float(humidity_mean), 2),
+                            "s": round(float(humidity_stddev), 3) if humidity_stddev is not None else 0,
+                            "min": round(float(humidity_min), 2),
+                            "max": round(float(humidity_max), 2),
+                        }
+
+                    aggregates.append(entry)
+
+            results[device_type] = aggregates
+
+        conn.close()
+        return results
+
+    except Exception as e:
+        print(f"ERROR querying YoLink aggregated data: {e}", file=sys.stderr)
+        return {"air": [], "water": []}
+
+
 def calculate_stats(measurements: List[Dict[str, Any]]) -> Dict[str, float]:
     """Calculate statistics from measurements."""
     if not measurements:
@@ -479,6 +599,9 @@ def create_json_output(
     aggregates_5m: Optional[List[Dict[str, Any]]] = None,
     aggregates_1h: Optional[List[Dict[str, Any]]] = None,
     analysis: Optional[Dict[str, Any]] = None,
+    yolink_1m: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    yolink_5m: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    yolink_1h: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     replay_delay: int = 300,
 ) -> Dict[str, Any]:
     """
@@ -490,6 +613,9 @@ def create_json_output(
         aggregates_5m: 5-minute aggregates for last 24 hours
         aggregates_1h: 1-hour aggregates for all historical data
         analysis: Segment analysis with slopes and predictions
+        yolink_1m: YoLink sensor 1-minute aggregates for last hour
+        yolink_5m: YoLink sensor 5-minute aggregates for last 24 hours
+        yolink_1h: YoLink sensor 1-hour aggregates for all historical data
         replay_delay: Delay in seconds for "realtime" replay visualization
 
     Returns:
@@ -529,6 +655,28 @@ def create_json_output(
     # Add segment analysis if available
     if analysis:
         output["analysis"] = analysis
+
+    # Add YoLink sensor data if available
+    # Structure: yolink_sensors.{interval}.{device_type} = [{t, temp:{m,s,min,max}, humidity?:{m,s,min,max}, n}, ...]
+    yolink_data = {}
+
+    def add_yolink_interval(key: str, data: Optional[Dict[str, List]], interval_minutes: int, lookback_hours: Optional[int]):
+        if data and (data.get("air") or data.get("water")):
+            yolink_data[key] = {
+                "interval_minutes": interval_minutes,
+                "lookback_hours": lookback_hours,
+            }
+            if data.get("air"):
+                yolink_data[key]["air"] = data["air"]
+            if data.get("water"):
+                yolink_data[key]["water"] = data["water"]
+
+    add_yolink_interval("agg_1m", yolink_1m, 1, 1)
+    add_yolink_interval("agg_5m", yolink_5m, 5, 24)
+    add_yolink_interval("agg_1h", yolink_1h, 60, None)
+
+    if yolink_data:
+        output["yolink_sensors"] = yolink_data
 
     return output
 
@@ -670,6 +818,31 @@ def main():
                 print(f"  Warning: Could not generate aggregates: {e}")
                 agg_1m = agg_5m = agg_1h = None
 
+            # Query YoLink sensor aggregated data
+            yolink_1m = yolink_5m = yolink_1h = None
+            try:
+                # 1-minute intervals for last hour
+                yolink_1m = query_yolink_aggregated_data(db_path, interval_minutes=1, lookback_hours=1)
+
+                # 5-minute intervals for last 24 hours
+                yolink_5m = query_yolink_aggregated_data(db_path, interval_minutes=5, lookback_hours=24)
+
+                # 1-hour intervals for all historical data
+                yolink_1h = query_yolink_aggregated_data(db_path, interval_minutes=60, lookback_hours=None)
+
+                if first_upload or error_count > 0:
+                    air_1m = len(yolink_1m.get("air", []))
+                    water_1m = len(yolink_1m.get("water", []))
+                    air_5m = len(yolink_5m.get("air", []))
+                    water_5m = len(yolink_5m.get("water", []))
+                    air_1h = len(yolink_1h.get("air", []))
+                    water_1h = len(yolink_1h.get("water", []))
+                    if air_1m or water_1m or air_5m or water_5m or air_1h or water_1h:
+                        print(f"  YoLink: air(1m={air_1m}, 5m={air_5m}, 1h={air_1h}), water(1m={water_1m}, 5m={water_5m}, 1h={water_1h})")
+
+            except Exception as e:
+                print(f"  Warning: Could not generate YoLink aggregates: {e}")
+
             # Perform segment analysis (expensive, so only periodically)
             # But always use cached results in JSON output
             if first_upload or (upload_count % 10 == 0):  # Every 10th upload
@@ -696,6 +869,9 @@ def main():
                 aggregates_5m=agg_5m,
                 aggregates_1h=agg_1h,
                 analysis=cached_analysis,  # Always use cached analysis
+                yolink_1m=yolink_1m,
+                yolink_5m=yolink_5m,
+                yolink_1h=yolink_1h,
                 replay_delay=replay_delay,
             )
 
