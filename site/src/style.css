@@ -145,6 +145,17 @@ a {
   margin-top: var(--spacing-xs);
 }
 
+/* Secondary stats grid (Yolink sensors) */
+.stats-grid-secondary {
+  margin-top: calc(-1 * var(--spacing-md));  /* Reduce gap from first grid */
+  margin-bottom: var(--spacing-lg);
+}
+
+/* .stats-grid-secondary .stat-value {
+  font-size: 2rem;
+  color: var(--color-secondary);
+} */
+
 /* Chart Container */
 .chart-container {
   background: var(--color-surface);

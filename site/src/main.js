@@ -48,6 +48,10 @@ const elements = {
   canvas1h: document.getElementById('chart-1h'),
   canvasSegments: document.getElementById('chart-segments'),
   canvasSlopes: document.getElementById('chart-slopes'),
+  // Yolink sensor stat cards
+  waterTemp: document.getElementById('water-temp'),
+  airTemp: document.getElementById('air-temp'),
+  humidity: document.getElementById('humidity'),
 };
 
 /**
@@ -541,7 +545,7 @@ function createAggregatedChart(canvasElement, title) {
             },
           },
           title: {
-            display: true,
+            display: false,
             text: 'Temperature (°F)',
             color: '#dd4444',
             font: {
@@ -564,7 +568,7 @@ function createAggregatedChart(canvasElement, title) {
             },
           },
           title: {
-            display: true,
+            display: false,
             text: 'Humidity (%)',
             color: 'hsl(162, 69%, 40%)',
             font: {
@@ -1195,6 +1199,9 @@ function updateStats(data) {
   const frequency = calculateMeasurementFrequency();
   elements.measurementFrequency.textContent = frequency.toFixed(2);
 
+  // Update Yolink sensor readings (use most recent data available)
+  updateYolinkStats();
+
   // Note: Countdown timer updates independently via setInterval
 
   // Update info section
@@ -1211,6 +1218,39 @@ function updateStats(data) {
   // not used
 //   const windowInfo = `${displayedData.length} of ${shouldBeVisible} points (${allMeasurements.length} total)`;
 //   elements.dataWindow.textContent = windowInfo;
+}
+
+/**
+ * Update Yolink sensor stat cards with most recent readings
+ */
+function updateYolinkStats() {
+  // Try to get the most recent sensor data (prefer 1m, fall back to 5m, then 1h)
+  const sensorData = yolinkSensorData.agg_1m || yolinkSensorData.agg_5m || yolinkSensorData.agg_1h;
+
+  if (!sensorData) {
+    return;
+  }
+
+  // Get most recent water temperature
+  if (sensorData.water && sensorData.water.length > 0) {
+    const latestWater = sensorData.water[sensorData.water.length - 1];
+    if (latestWater.temp && latestWater.temp.m !== undefined) {
+      const tempF = celsiusToFahrenheit(latestWater.temp.m);
+      elements.waterTemp.textContent = tempF.toFixed(1);
+    }
+  }
+
+  // Get most recent air temperature and humidity
+  if (sensorData.air && sensorData.air.length > 0) {
+    const latestAir = sensorData.air[sensorData.air.length - 1];
+    if (latestAir.temp && latestAir.temp.m !== undefined) {
+      const tempF = celsiusToFahrenheit(latestAir.temp.m);
+      elements.airTemp.textContent = tempF.toFixed(1);
+    }
+    if (latestAir.humidity && latestAir.humidity.m !== undefined) {
+      elements.humidity.textContent = latestAir.humidity.m.toFixed(1);
+    }
+  }
 }
 
 /**
