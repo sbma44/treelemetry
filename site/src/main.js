@@ -29,9 +29,171 @@ let currentUnit = 'mm'; // 'mm' or 'mL'
 let replayInterval = null;
 let refreshInterval = null;
 let countdownInterval = null;
-let replayDelayMs = 60000; //1 minute 
+let replayDelayMs = 60000; //1 minute
 // 300000; // 5 minutes in milliseconds
 let predictedRefillTime = null; // Store predicted refill time
+let faviconInterval = null; // Favicon animation interval
+let currentWaterLevel = null; // Current water level for favicon
+
+// Favicon animation state
+const faviconState = {
+  lightFrame: 0,
+  canvas: null,
+  ctx: null,
+  link: null,
+};
+
+// Light positions on the tree (x, y coordinates in 32x32 space)
+const treeLights = [
+  { x: 16, y: 5 },   // top
+  { x: 12, y: 9 },   { x: 20, y: 9 },
+  { x: 9, y: 13 },   { x: 16, y: 12 }, { x: 23, y: 13 },
+  { x: 7, y: 18 },   { x: 13, y: 17 }, { x: 19, y: 17 }, { x: 25, y: 18 },
+  { x: 8, y: 22 },   { x: 14, y: 21 }, { x: 20, y: 21 }, { x: 24, y: 22 },
+];
+
+// Light colors
+const lightColors = ['#ff0000', '#00ff00', '#ffff00', '#ff00ff', '#00ffff', '#ff8800'];
+
+/**
+ * Initialize the favicon canvas
+ */
+function initFavicon() {
+  faviconState.canvas = document.createElement('canvas');
+  faviconState.canvas.width = 32;
+  faviconState.canvas.height = 32;
+  faviconState.ctx = faviconState.canvas.getContext('2d');
+
+  // Find or create the favicon link element
+  faviconState.link = document.querySelector("link[rel*='icon']");
+  if (!faviconState.link) {
+    faviconState.link = document.createElement('link');
+    faviconState.link.rel = 'icon';
+    document.head.appendChild(faviconState.link);
+  }
+}
+
+/**
+ * Draw the Christmas tree favicon with twinkling lights
+ */
+function drawFavicon(waterLevel) {
+  const ctx = faviconState.ctx;
+  const canvas = faviconState.canvas;
+
+  // Clear canvas
+  ctx.clearRect(0, 0, 32, 32);
+
+  // Draw tree layers (dark green)
+  ctx.fillStyle = '#228B22';
+
+  // Top triangle
+  ctx.beginPath();
+  ctx.moveTo(16, 4);
+  ctx.lineTo(22, 11);
+  ctx.lineTo(10, 11);
+  ctx.closePath();
+  ctx.fill();
+
+  // Middle triangle
+  ctx.beginPath();
+  ctx.moveTo(16, 8);
+  ctx.lineTo(25, 17);
+  ctx.lineTo(7, 17);
+  ctx.closePath();
+  ctx.fill();
+
+  // Bottom triangle
+  ctx.beginPath();
+  ctx.moveTo(16, 13);
+  ctx.lineTo(27, 25);
+  ctx.lineTo(5, 25);
+  ctx.closePath();
+  ctx.fill();
+
+  // Draw trunk
+  ctx.fillStyle = '#8B4513';
+  ctx.fillRect(13, 25, 6, 5);
+
+  // Draw twinkling lights
+  treeLights.forEach((light, index) => {
+    // Each light twinkles based on frame and its index
+    const isLit = ((faviconState.lightFrame + index) % 3) !== 0;
+    if (isLit) {
+      const colorIndex = (index + faviconState.lightFrame) % lightColors.length;
+      ctx.fillStyle = lightColors[colorIndex];
+      ctx.beginPath();
+      ctx.arc(light.x, light.y, 2, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Add glow effect
+      ctx.fillStyle = lightColors[colorIndex] + '40';
+      ctx.beginPath();
+      ctx.arc(light.x, light.y, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
+
+  // Draw star with health-based color
+  let starColor = '#3b82f6'; // Blue (good, < 40mm)
+  if (waterLevel !== null) {
+    if (waterLevel > 50) {
+      starColor = '#ef4444'; // Red (needs water)
+    } else if (waterLevel >= 40) {
+      starColor = '#fbbf24'; // Yellow (warning)
+    }
+  }
+
+  // Draw 5-pointed star
+  ctx.fillStyle = starColor;
+  ctx.beginPath();
+  const starX = 16, starY = 3, outerR = 4, innerR = 2;
+  for (let i = 0; i < 5; i++) {
+    const outerAngle = (i * 72 - 90) * Math.PI / 180;
+    const innerAngle = ((i * 72) + 36 - 90) * Math.PI / 180;
+    if (i === 0) {
+      ctx.moveTo(starX + outerR * Math.cos(outerAngle), starY + outerR * Math.sin(outerAngle));
+    } else {
+      ctx.lineTo(starX + outerR * Math.cos(outerAngle), starY + outerR * Math.sin(outerAngle));
+    }
+    ctx.lineTo(starX + innerR * Math.cos(innerAngle), starY + innerR * Math.sin(innerAngle));
+  }
+  ctx.closePath();
+  ctx.fill();
+
+  // Add star glow
+  ctx.fillStyle = starColor + '60';
+  ctx.beginPath();
+  ctx.arc(starX, starY, 5, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Update favicon
+  faviconState.link.href = canvas.toDataURL('image/png');
+}
+
+/**
+ * Update favicon animation frame
+ */
+function updateFavicon() {
+  faviconState.lightFrame = (faviconState.lightFrame + 1) % 12;
+  drawFavicon(currentWaterLevel);
+}
+
+/**
+ * Start the favicon animation
+ */
+function startFaviconAnimation() {
+  if (!faviconState.canvas) {
+    initFavicon();
+  }
+
+  // Initial draw
+  drawFavicon(currentWaterLevel);
+
+  // Animate every 500ms for twinkling effect
+  if (!faviconInterval) {
+    faviconInterval = setInterval(updateFavicon, 500);
+  }
+}
 
 // DOM Elements
 const elements = {
@@ -1192,6 +1354,9 @@ function updateStats(data) {
     const latest = displayedData[displayedData.length - 1];
     const value = convertValue(latest.water_level_mm);
     elements.currentLevel.textContent = value?.toFixed(2) || '--';
+
+    // Update water level for favicon health indicator
+    currentWaterLevel = latest.water_level_mm;
   }
 
   // Toggle unit labels in current level stat card
@@ -1583,6 +1748,9 @@ function init() {
       switchUnit(btn.dataset.unit);
     });
   });
+
+  // Start favicon animation
+  startFaviconAnimation();
 
   // Initial load
   loadData();
