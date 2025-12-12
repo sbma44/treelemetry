@@ -145,6 +145,10 @@ a {
   margin-top: var(--spacing-xs);
 }
 
+#ml {
+  display: none;
+}
+
 /* Secondary stats grid (Yolink sensors) */
 .stats-grid-secondary {
   margin-top: calc(-1 * var(--spacing-md));  /* Reduce gap from first grid */

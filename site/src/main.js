@@ -29,7 +29,8 @@ let currentUnit = 'mm'; // 'mm' or 'mL'
 let replayInterval = null;
 let refreshInterval = null;
 let countdownInterval = null;
-let replayDelayMs = 300000; // 5 minutes in milliseconds
+let replayDelayMs = 60000; //1 minute 
+// 300000; // 5 minutes in milliseconds
 let predictedRefillTime = null; // Store predicted refill time
 
 // DOM Elements
@@ -52,6 +53,9 @@ const elements = {
   waterTemp: document.getElementById('water-temp'),
   airTemp: document.getElementById('air-temp'),
   humidity: document.getElementById('humidity'),
+  // Unit labels for current level stat card
+  mmUnit: document.getElementById('mm'),
+  mlUnit: document.getElementById('ml'),
 };
 
 /**
@@ -142,10 +146,10 @@ async function fetchData() {
 
     const data = await response.json();
 
-    // Update replay delay from server
-    if (data.replay_delay_seconds) {
-      replayDelayMs = data.replay_delay_seconds * 1000;
-    }
+    // // Update replay delay from server
+    // if (data.replay_delay_seconds) {
+    //   replayDelayMs = data.replay_delay_seconds * 1000;
+    // }
 
     // Store aggregated data if available
     if (data.agg_1m) {
@@ -357,7 +361,7 @@ function createAggregatedChart(canvasElement, title) {
         {
           label: 'Water Level (Mean)',
           data: [],
-          borderColor: 'rgba(129, 140, 248, 0.8)',
+          borderColor: 'rgba(59, 130, 246, 0.9)',
           backgroundColor: 'rgba(129, 140, 248, 0.3)',
           borderWidth: 3,
           tension: 0.4,
@@ -365,9 +369,9 @@ function createAggregatedChart(canvasElement, title) {
             target: {value: 50},
             above: 'rgba(129, 140, 248, 0.3)'
           },
-          pointRadius: 3,
-          pointHoverRadius: 5,
-          pointBackgroundColor: 'rgba(129, 140, 248, 0.8)',
+          pointRadius: 0,
+          pointHoverRadius: 4,
+          pointBackgroundColor: 'rgba(59, 130, 246, 0.9)',
           pointBorderColor: '#0f1419',
           pointBorderWidth: 2,
           yAxisID: 'y',
@@ -375,10 +379,9 @@ function createAggregatedChart(canvasElement, title) {
         {
           label: 'Water Level (Min)',
           data: [],
-          borderColor: 'hsl(162, 69%, 40%)',
-          backgroundColor: 'rgba(129, 140, 248, 0.1)',
+          borderColor: 'rgba(32, 172, 130, 0.5)',
+          backgroundColor: 'rgba(32, 172, 130, 0)',
           borderWidth: 2,
-          borderDash: [5, 5],
           tension: 0.4,
           fill: false,
           pointRadius: 0,
@@ -388,10 +391,9 @@ function createAggregatedChart(canvasElement, title) {
         {
           label: 'Water Level (Max)',
           data: [],
-          borderColor: '#dd4444',
-          backgroundColor: 'rgba(244, 114, 182, 0.1)',
+          borderColor: 'rgba(221,68,68, 0.5)',
+          backgroundColor: 'rgba(221,68,68, 0)',
           borderWidth: 2,
-          borderDash: [5, 5],
           tension: 0.4,
           fill: false,
           pointRadius: 0,
@@ -408,8 +410,9 @@ function createAggregatedChart(canvasElement, title) {
           tension: 0.4,
           fill: false,
           pointRadius: 2,
+          borderDash: [3, 3],
           pointHoverRadius: 4,
-          pointBackgroundColor: 'rgba(59, 130, 246, 0.9)',
+          pointBackgroundColor: 'rgba(59, 130, 246, 0)',
           yAxisID: 'yRight',
         },
         {
@@ -417,26 +420,28 @@ function createAggregatedChart(canvasElement, title) {
           data: [],
           borderColor: '#dd4444',
           backgroundColor: '#dd4444',
+          backgroundColor: 'rgba(59, 130, 246, 0)',
           borderWidth: 2,
           tension: 0.4,
           fill: false,
           pointRadius: 2,
+          borderDash: [3, 3],
           pointHoverRadius: 4,
-          pointBackgroundColor: '#dd4444',
+          pointBackgroundColor: 'rgba(59, 130, 246, 0)',
           yAxisID: 'yRight',
         },
         {
           label: 'Humidity',
           data: [],
           borderColor: 'hsl(162, 69%, 40%)',  // pine
-          backgroundColor: 'hsl(162, 69%, 40%)',
+          backgroundColor: 'rgba(59, 130, 246, 0)',
           borderWidth: 2,
           borderDash: [3, 3],
           tension: 0.4,
           fill: false,
           pointRadius: 2,
           pointHoverRadius: 4,
-          pointBackgroundColor: 'hsl(162, 69%, 40%)',
+          pointBackgroundColor: 'rgba(59, 130, 246, 0)',
           yAxisID: 'yHumidity',
         },
       ],
@@ -539,7 +544,7 @@ function createAggregatedChart(canvasElement, title) {
             drawOnChartArea: false,  // Don't draw grid lines for this axis
           },
           ticks: {
-            color: '#dd4444',
+            color: '#9ca3af',
             callback: function(value) {
               return value.toFixed(0) + '°F';
             },
@@ -1189,10 +1194,15 @@ function updateStats(data) {
     elements.currentLevel.textContent = value?.toFixed(2) || '--';
   }
 
-  // Update unit labels in stat cards (only first one shows water level)
-  const firstStatUnit = document.querySelector('.stat-unit');
-  if (firstStatUnit) {
-    firstStatUnit.textContent = getUnitLabel();
+  // Toggle unit labels in current level stat card
+  if (elements.mmUnit && elements.mlUnit) {
+    if (currentUnit === 'mm') {
+      elements.mmUnit.style.display = 'block';
+      elements.mlUnit.style.display = 'none';
+    } else {
+      elements.mmUnit.style.display = 'none';
+      elements.mlUnit.style.display = 'block';
+    }
   }
 
   // Update measurement frequency (Hz)
