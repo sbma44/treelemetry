@@ -388,3 +388,4 @@ class TestYoLinkAuthManager:
         call_args = mock_session.post.call_args
         assert "grant_type" in str(call_args)
         assert "client_credentials" in str(call_args)
+

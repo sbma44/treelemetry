@@ -404,3 +404,4 @@ class YoLinkClient:
     def connected(self) -> bool:
         """Return whether the client is currently connected."""
         return self._connected
+
