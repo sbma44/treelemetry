@@ -43,6 +43,12 @@ Thumbs.db
 # AWS
 .aws/
 
+# Deployment scripts with secrets (use *.example.sh templates)
+data_sleigh/run-docker-data-sleigh.sh
+data_sleigh/deploy-data-sleigh.sh
+mqtt_logger/run-docker.sh
+uploader/run-docker.sh
+
 # Keep docs/ but ignore build artifacts within it
 # (docs/ will contain the built static site for GitHub Pages)
 
