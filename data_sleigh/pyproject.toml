@@ -3,7 +3,7 @@ name = "data-sleigh"
 version = "1.0.0"
 description = "Unified MQTT logger and S3 uploader with season awareness for Treelemetry"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 authors = [
     { name = "Tom Lee" }
 ]
@@ -98,5 +98,6 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # Allow unused imports in __init__.py files
+
 
 
