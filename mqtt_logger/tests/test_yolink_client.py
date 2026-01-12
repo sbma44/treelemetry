@@ -389,3 +389,6 @@ class TestYoLinkAuthManager:
         assert "grant_type" in str(call_args)
         assert "client_credentials" in str(call_args)
 
+
+
+

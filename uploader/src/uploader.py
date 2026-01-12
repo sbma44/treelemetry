@@ -12,6 +12,7 @@ import os
 import sys
 import signal
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -48,41 +49,62 @@ def get_env_or_exit(var_name: str) -> str:
     return value
 
 
+@contextmanager
 def get_db_connection(db_path: Path):
     """
     Establish connection to DuckDB with fallback strategies.
 
+    This is a context manager that ensures proper cleanup of resources,
+    especially temporary database copies created when file locking fails.
+
     Args:
         db_path: Path to the DuckDB database file
 
-    Returns:
+    Yields:
         DuckDB connection object
+
+    Example:
+        with get_db_connection(db_path) as conn:
+            result = conn.execute("SELECT * FROM table").fetchall()
     """
-    # For Docker volume mounts (especially on macOS), DuckDB's file locking
-    # can fail. We'll try multiple approaches:
+    import tempfile
+    import shutil
 
-    # Approach 1: Try with read_only mode and explicit config
+    conn = None
+    tmp_path = None
+
     try:
-        config = {'access_mode': 'READ_ONLY'}
-        return duckdb.connect(str(db_path), read_only=True, config=config)
-    except duckdb.IOException:
-        # Approach 2: If locking fails, copy the file to temp location
-        # This is slower but works reliably with Docker volume mounts
-        import tempfile
-        import shutil
+        # Approach 1: Try with read_only mode and explicit config
+        try:
+            config = {'access_mode': 'READ_ONLY'}
+            conn = duckdb.connect(str(db_path), read_only=True, config=config)
+            yield conn
+        except duckdb.IOException:
+            # Approach 2: If locking fails, copy the file to temp location
+            # This is slower but works reliably with Docker volume mounts
+            print("  Note: Using temporary copy due to lock constraints")
 
-        print("  Note: Using temporary copy due to lock constraints")
-        with tempfile.NamedTemporaryFile(suffix='.duckdb', delete=False) as tmp:
-            tmp_path = tmp.name
+            with tempfile.NamedTemporaryFile(suffix='.duckdb', delete=False) as tmp:
+                tmp_path = tmp.name
 
-        shutil.copy2(db_path, tmp_path)
-        conn = duckdb.connect(tmp_path, read_only=True)
+            shutil.copy2(db_path, tmp_path)
+            conn = duckdb.connect(tmp_path, read_only=True)
+            yield conn
+    finally:
+        # Ensure connection is closed
+        if conn:
+            try:
+                conn.close()
+            except Exception as e:
+                print(f"  Warning: Error closing connection: {e}", file=sys.stderr)
 
-        # Clean up temp file after we're done
-        import atexit
-        atexit.register(lambda: Path(tmp_path).unlink(missing_ok=True))
-
-        return conn
+        # Clean up temp file immediately if it was created
+        if tmp_path:
+            try:
+                Path(tmp_path).unlink(missing_ok=True)
+                print(f"  Cleaned up temporary database copy: {tmp_path}")
+            except Exception as e:
+                print(f"  Warning: Could not delete temp file {tmp_path}: {e}", file=sys.stderr)
 
 
 def query_water_levels(db_path: Path, minutes: int = 10) -> List[Dict[str, Any]]:
@@ -97,46 +119,44 @@ def query_water_levels(db_path: Path, minutes: int = 10) -> List[Dict[str, Any]]
         List of measurement dictionaries
     """
     try:
-        conn = get_db_connection(db_path)
+        with get_db_connection(db_path) as conn:
+            # Query the MQTT log format:
+            # CREATE TABLE water_level (
+            #     id INTEGER PRIMARY KEY,
+            #     timestamp TIMESTAMP NOT NULL,
+            #     topic VARCHAR NOT NULL,
+            #     payload VARCHAR,
+            #     qos INTEGER,
+            #     retain BOOLEAN
+            # )
+            #
+            # Note: We use the MAX(timestamp) approach instead of NOW() to avoid
+            # timezone issues between the database timestamps and system time
+            query = f"""
+            WITH latest AS (
+                SELECT MAX(timestamp) as max_ts
+                FROM water_level
+                WHERE topic = 'xmas/tree/water/raw'
+            )
+            SELECT
+                timestamp,
+                CAST(payload AS DOUBLE) as water_level_mm
+            FROM water_level, latest
+            WHERE timestamp >= latest.max_ts - INTERVAL '{minutes} minutes'
+            AND topic = 'xmas/tree/water/raw'
+            ORDER BY timestamp ASC
+            """
 
-        # Query the MQTT log format:
-        # CREATE TABLE water_level (
-        #     id INTEGER PRIMARY KEY,
-        #     timestamp TIMESTAMP NOT NULL,
-        #     topic VARCHAR NOT NULL,
-        #     payload VARCHAR,
-        #     qos INTEGER,
-        #     retain BOOLEAN
-        # )
-        #
-        # Note: We use the MAX(timestamp) approach instead of NOW() to avoid
-        # timezone issues between the database timestamps and system time
-        query = f"""
-        WITH latest AS (
-            SELECT MAX(timestamp) as max_ts
-            FROM water_level
-            WHERE topic = 'xmas/tree/water/raw'
-        )
-        SELECT
-            timestamp,
-            CAST(payload AS DOUBLE) as water_level_mm
-        FROM water_level, latest
-        WHERE timestamp >= latest.max_ts - INTERVAL '{minutes} minutes'
-        AND topic = 'xmas/tree/water/raw'
-        ORDER BY timestamp ASC
-        """
+            result = conn.execute(query).fetchall()
 
-        result = conn.execute(query).fetchall()
-        conn.close()
+            measurements = []
+            for row in result:
+                measurements.append({
+                    "timestamp": row[0].isoformat() if hasattr(row[0], 'isoformat') else str(row[0]),
+                    "water_level_mm": float(row[1]) if row[1] is not None else None,
+                })
 
-        measurements = []
-        for row in result:
-            measurements.append({
-                "timestamp": row[0].isoformat() if hasattr(row[0], 'isoformat') else str(row[0]),
-                "water_level_mm": float(row[1]) if row[1] is not None else None,
-            })
-
-        return measurements
+            return measurements
 
     except duckdb.IOException as e:
         # Handle database lock or access issues specifically
@@ -165,59 +185,57 @@ def query_aggregated_data(
         List of aggregated measurement dictionaries with statistics
     """
     try:
-        conn = get_db_connection(db_path)
+        with get_db_connection(db_path) as conn:
+            # Build the time window constraint
+            if lookback_hours is not None:
+                time_filter = f"timestamp >= latest.max_ts - INTERVAL '{lookback_hours} hours'"
+            else:
+                time_filter = "1=1"  # No time filter, get all data
 
-        # Build the time window constraint
-        if lookback_hours is not None:
-            time_filter = f"timestamp >= latest.max_ts - INTERVAL '{lookback_hours} hours'"
-        else:
-            time_filter = "1=1"  # No time filter, get all data
+            query = f"""
+            WITH latest AS (
+                SELECT MAX(timestamp) as max_ts
+                FROM water_level
+                WHERE topic = 'xmas/tree/water/raw'
+            )
+            SELECT
+                time_bucket(INTERVAL '{interval_minutes} minutes', timestamp) as bucket_time,
+                AVG(CAST(payload AS DOUBLE)) as mean,
+                STDDEV_POP(CAST(payload AS DOUBLE)) as stddev,
+                MIN(CAST(payload AS DOUBLE)) as min,
+                MAX(CAST(payload AS DOUBLE)) as max,
+                COUNT(*) as count
+            FROM water_level, latest
+            WHERE {time_filter}
+            AND topic = 'xmas/tree/water/raw'
+            AND payload IS NOT NULL
+            GROUP BY bucket_time
+            ORDER BY bucket_time ASC
+            """
 
-        query = f"""
-        WITH latest AS (
-            SELECT MAX(timestamp) as max_ts
-            FROM water_level
-            WHERE topic = 'xmas/tree/water/raw'
-        )
-        SELECT
-            time_bucket(INTERVAL '{interval_minutes} minutes', timestamp) as bucket_time,
-            AVG(CAST(payload AS DOUBLE)) as mean,
-            STDDEV_POP(CAST(payload AS DOUBLE)) as stddev,
-            MIN(CAST(payload AS DOUBLE)) as min,
-            MAX(CAST(payload AS DOUBLE)) as max,
-            COUNT(*) as count
-        FROM water_level, latest
-        WHERE {time_filter}
-        AND topic = 'xmas/tree/water/raw'
-        AND payload IS NOT NULL
-        GROUP BY bucket_time
-        ORDER BY bucket_time ASC
-        """
+            result = conn.execute(query).fetchall()
 
-        result = conn.execute(query).fetchall()
-        conn.close()
+            aggregates = []
+            for row in result:
+                bucket_time = row[0]
+                mean = row[1]
+                stddev = row[2]
+                min_val = row[3]
+                max_val = row[4]
+                count = row[5]
 
-        aggregates = []
-        for row in result:
-            bucket_time = row[0]
-            mean = row[1]
-            stddev = row[2]
-            min_val = row[3]
-            max_val = row[4]
-            count = row[5]
+                # Only include if we have valid data
+                if mean is not None:
+                    aggregates.append({
+                        "t": bucket_time.isoformat() if hasattr(bucket_time, 'isoformat') else str(bucket_time),
+                        "m": round(float(mean), 2),
+                        "s": round(float(stddev), 3) if stddev is not None else 0,
+                        "n": int(count),
+                        "min": round(float(min_val), 2),
+                        "max": round(float(max_val), 2),
+                    })
 
-            # Only include if we have valid data
-            if mean is not None:
-                aggregates.append({
-                    "t": bucket_time.isoformat() if hasattr(bucket_time, 'isoformat') else str(bucket_time),
-                    "m": round(float(mean), 2),
-                    "s": round(float(stddev), 3) if stddev is not None else 0,
-                    "n": int(count),
-                    "min": round(float(min_val), 2),
-                    "max": round(float(max_val), 2),
-                })
-
-        return aggregates
+            return aggregates
 
     except Exception as e:
         print(f"ERROR querying aggregated data: {e}", file=sys.stderr)
@@ -242,102 +260,99 @@ def query_yolink_aggregated_data(
         aggregated measurement dictionaries with temperature (and humidity for air).
     """
     try:
-        conn = get_db_connection(db_path)
+        with get_db_connection(db_path) as conn:
+            # Check if yolink_sensors table exists
+            tables = conn.execute("SHOW TABLES").fetchall()
+            table_names = [t[0] for t in tables]
+            if "yolink_sensors" not in table_names:
+                return {"air": [], "water": []}
 
-        # Check if yolink_sensors table exists
-        tables = conn.execute("SHOW TABLES").fetchall()
-        table_names = [t[0] for t in tables]
-        if "yolink_sensors" not in table_names:
-            conn.close()
-            return {"air": [], "water": []}
+            # Build the time window constraint
+            if lookback_hours is not None:
+                time_filter = f"timestamp >= latest.max_ts - INTERVAL '{lookback_hours} hours'"
+            else:
+                time_filter = "1=1"  # No time filter, get all data
 
-        # Build the time window constraint
-        if lookback_hours is not None:
-            time_filter = f"timestamp >= latest.max_ts - INTERVAL '{lookback_hours} hours'"
-        else:
-            time_filter = "1=1"  # No time filter, get all data
+            results = {"air": [], "water": []}
 
-        results = {"air": [], "water": []}
-
-        for device_type in ["air", "water"]:
-            # Query to aggregate YoLink sensor data
-            # The payload is JSON stored as VARCHAR with structure:
-            # {"device_type": "air/water", "temperature": float, "humidity": float|null, ...}
-            query = f"""
-            WITH latest AS (
-                SELECT MAX(timestamp) as max_ts
-                FROM yolink_sensors
-            ),
-            parsed AS (
+            for device_type in ["air", "water"]:
+                # Query to aggregate YoLink sensor data
+                # The payload is JSON stored as VARCHAR with structure:
+                # {"device_type": "air/water", "temperature": float, "humidity": float|null, ...}
+                query = f"""
+                WITH latest AS (
+                    SELECT MAX(timestamp) as max_ts
+                    FROM yolink_sensors
+                ),
+                parsed AS (
+                    SELECT
+                        timestamp,
+                        json_extract(payload, '$.temperature')::DOUBLE as temperature,
+                        json_extract(payload, '$.humidity')::DOUBLE as humidity
+                    FROM yolink_sensors, latest
+                    WHERE {time_filter}
+                    AND topic LIKE 'yolink/{device_type}/%'
+                    AND payload IS NOT NULL
+                )
                 SELECT
-                    timestamp,
-                    json_extract(payload, '$.temperature')::DOUBLE as temperature,
-                    json_extract(payload, '$.humidity')::DOUBLE as humidity
-                FROM yolink_sensors, latest
-                WHERE {time_filter}
-                AND topic LIKE 'yolink/{device_type}/%'
-                AND payload IS NOT NULL
-            )
-            SELECT
-                time_bucket(INTERVAL '{interval_minutes} minutes', timestamp) as bucket_time,
-                AVG(temperature) as temp_mean,
-                STDDEV_POP(temperature) as temp_stddev,
-                MIN(temperature) as temp_min,
-                MAX(temperature) as temp_max,
-                AVG(humidity) as humidity_mean,
-                STDDEV_POP(humidity) as humidity_stddev,
-                MIN(humidity) as humidity_min,
-                MAX(humidity) as humidity_max,
-                COUNT(*) as count
-            FROM parsed
-            WHERE temperature IS NOT NULL
-            GROUP BY bucket_time
-            ORDER BY bucket_time ASC
-            """
+                    time_bucket(INTERVAL '{interval_minutes} minutes', timestamp) as bucket_time,
+                    AVG(temperature) as temp_mean,
+                    STDDEV_POP(temperature) as temp_stddev,
+                    MIN(temperature) as temp_min,
+                    MAX(temperature) as temp_max,
+                    AVG(humidity) as humidity_mean,
+                    STDDEV_POP(humidity) as humidity_stddev,
+                    MIN(humidity) as humidity_min,
+                    MAX(humidity) as humidity_max,
+                    COUNT(*) as count
+                FROM parsed
+                WHERE temperature IS NOT NULL
+                GROUP BY bucket_time
+                ORDER BY bucket_time ASC
+                """
 
-            result = conn.execute(query).fetchall()
+                result = conn.execute(query).fetchall()
 
-            aggregates = []
-            for row in result:
-                bucket_time = row[0]
-                temp_mean = row[1]
-                temp_stddev = row[2]
-                temp_min = row[3]
-                temp_max = row[4]
-                humidity_mean = row[5]
-                humidity_stddev = row[6]
-                humidity_min = row[7]
-                humidity_max = row[8]
-                count = row[9]
+                aggregates = []
+                for row in result:
+                    bucket_time = row[0]
+                    temp_mean = row[1]
+                    temp_stddev = row[2]
+                    temp_min = row[3]
+                    temp_max = row[4]
+                    humidity_mean = row[5]
+                    humidity_stddev = row[6]
+                    humidity_min = row[7]
+                    humidity_max = row[8]
+                    count = row[9]
 
-                # Only include if we have valid temperature data
-                if temp_mean is not None:
-                    entry = {
-                        "t": bucket_time.isoformat() if hasattr(bucket_time, 'isoformat') else str(bucket_time),
-                        "temp": {
-                            "m": round(float(temp_mean), 2),
-                            "s": round(float(temp_stddev), 3) if temp_stddev is not None else 0,
-                            "min": round(float(temp_min), 2),
-                            "max": round(float(temp_max), 2),
-                        },
-                        "n": int(count),
-                    }
-
-                    # Only include humidity for air sensor (and if we have valid data)
-                    if device_type == "air" and humidity_mean is not None:
-                        entry["humidity"] = {
-                            "m": round(float(humidity_mean), 2),
-                            "s": round(float(humidity_stddev), 3) if humidity_stddev is not None else 0,
-                            "min": round(float(humidity_min), 2),
-                            "max": round(float(humidity_max), 2),
+                    # Only include if we have valid temperature data
+                    if temp_mean is not None:
+                        entry = {
+                            "t": bucket_time.isoformat() if hasattr(bucket_time, 'isoformat') else str(bucket_time),
+                            "temp": {
+                                "m": round(float(temp_mean), 2),
+                                "s": round(float(temp_stddev), 3) if temp_stddev is not None else 0,
+                                "min": round(float(temp_min), 2),
+                                "max": round(float(temp_max), 2),
+                            },
+                            "n": int(count),
                         }
 
-                    aggregates.append(entry)
+                        # Only include humidity for air sensor (and if we have valid data)
+                        if device_type == "air" and humidity_mean is not None:
+                            entry["humidity"] = {
+                                "m": round(float(humidity_mean), 2),
+                                "s": round(float(humidity_stddev), 3) if humidity_stddev is not None else 0,
+                                "min": round(float(humidity_min), 2),
+                                "max": round(float(humidity_max), 2),
+                            }
 
-            results[device_type] = aggregates
+                        aggregates.append(entry)
 
-        conn.close()
-        return results
+                results[device_type] = aggregates
+
+            return results
 
     except Exception as e:
         print(f"ERROR querying YoLink aggregated data: {e}", file=sys.stderr)
@@ -378,21 +393,19 @@ def analyze_water_level_segments(db_path: Path) -> Optional[Dict[str, Any]]:
         Dictionary containing segments, extrema, and current prediction
     """
     try:
-        conn = get_db_connection(db_path)
+        with get_db_connection(db_path) as conn:
+            # Query all historical data for analysis
+            query = """
+            SELECT
+                timestamp,
+                CAST(payload AS DOUBLE) as distance_mm
+            FROM water_level
+            WHERE topic = 'xmas/tree/water/raw'
+              AND payload IS NOT NULL
+            ORDER BY timestamp ASC
+            """
 
-        # Query all historical data for analysis
-        query = """
-        SELECT
-            timestamp,
-            CAST(payload AS DOUBLE) as distance_mm
-        FROM water_level
-        WHERE topic = 'xmas/tree/water/raw'
-          AND payload IS NOT NULL
-        ORDER BY timestamp ASC
-        """
-
-        df = conn.execute(query).df()
-        conn.close()
+            df = conn.execute(query).df()
 
         if len(df) < 100:  # Need sufficient data for analysis
             return None
