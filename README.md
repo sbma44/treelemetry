@@ -205,6 +205,9 @@ Data Sleigh consolidates the previous `mqtt_logger` and `uploader` components:
 
 The legacy `mqtt_logger/` and `uploader/` directories are preserved for reference but are no longer actively maintained.
 
+## Screenshot
+![example](screenshot.png)
+
 ## License
 
 MIT
