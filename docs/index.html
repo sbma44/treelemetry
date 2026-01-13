@@ -14,10 +14,28 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Treelemetry 🎄💧 - Christmas Tree Water Level Monitor</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
-  <script type="module" crossorigin src="/assets/index-CLt6s43Z.js"></script>
-  <link rel="stylesheet" crossorigin href="/assets/index-KUz99vhT.css">
+  <script type="module" crossorigin src="/assets/index-Bqs0GymH.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-eEuLzRMj.css">
 </head>
 <body>
+  <!-- Offseason Mode -->
+  <div id="offseason-mode" class="offseason-mode" style="display: none;">
+    <video id="offseason-video" class="offseason-video" autoplay loop muted playsinline>
+      <source src="/santa.mp4" type="video/mp4">
+    </video>
+    <div class="offseason-overlay">
+      <div class="offseason-infobox">
+        <h1 class="offseason-header">🎄 TREELEMETRY OFFSEASON MODE 🎄</h1>
+        <div class="offseason-content">
+          <p>The season has concluded, and Christmas tree monitoring is no longer currently active.<br/> We appreciate your patience as our team uses the offseason to relentlessly pursue additional innovations.</p>
+          <p class="offseason-dates">
+            <span id="offseason-season-info"></span>
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="container">
     <header>
       <h1>🎄 Treelemetry 💧</h1>
