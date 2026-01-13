@@ -155,3 +155,4 @@ echo "----------------------------------------"
 exec uv run python main.py "$CONFIG_FILE"
 
 
+
