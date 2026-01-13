@@ -376,3 +376,149 @@ footer {
   }
 }
 
+/* ============================================
+   OFFSEASON MODE STYLES
+   ============================================ */
+
+.offseason-mode {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 9999;
+  overflow: hidden;
+}
+
+.offseason-video {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  min-width: 100%;
+  min-height: 100%;
+  width: auto;
+  height: auto;
+  transform: translate(-50%, -50%);
+  object-fit: cover;
+  z-index: 1;
+}
+
+.offseason-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+.offseason-infobox {
+  background: rgba(15, 20, 25, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 2px solid var(--color-holly);
+  border-radius: var(--border-radius);
+  padding: var(--spacing-xl) var(--spacing-xl);
+  max-width: 90vw;
+  text-align: center;
+  box-shadow:
+    0 0 60px rgba(221, 68, 68, 0.3),
+    0 0 120px rgba(221, 68, 68, 0.1),
+    0 25px 50px rgba(0, 0, 0, 0.5);
+  animation: infobox-glow 3s ease-in-out infinite alternate;
+}
+
+@keyframes infobox-glow {
+  0% {
+    box-shadow:
+      0 0 60px rgba(221, 68, 68, 0.3),
+      0 0 120px rgba(221, 68, 68, 0.1),
+      0 25px 50px rgba(0, 0, 0, 0.5);
+  }
+  100% {
+    box-shadow:
+      0 0 80px rgba(221, 68, 68, 0.4),
+      0 0 160px rgba(221, 68, 68, 0.2),
+      0 25px 50px rgba(0, 0, 0, 0.5);
+  }
+}
+
+.offseason-header {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: var(--color-holly);
+  margin-bottom: var(--spacing-lg);
+  text-shadow: 0 2px 10px rgba(221, 68, 68, 0.5);
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.offseason-content {
+  color: var(--color-text);
+  font-size: 1.125rem;
+  line-height: 1.8;
+}
+
+.offseason-content p {
+  margin-bottom: var(--spacing-sm);
+}
+
+.offseason-dates {
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-border);
+  font-size: 0.95rem;
+  color: var(--color-text-dim);
+}
+
+/* Dev mode indicator for forced offseason */
+.offseason-dev-indicator {
+  position: absolute;
+  bottom: var(--spacing-md);
+  right: var(--spacing-md);
+  background: rgba(251, 191, 36, 0.9);
+  color: #000;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  z-index: 3;
+}
+
+/* Responsive adjustments for offseason */
+@media (max-width: 768px) {
+  .offseason-header {
+    font-size: 1.25rem;
+  }
+
+  .offseason-content {
+    font-size: 1rem;
+  }
+
+  .offseason-infobox {
+    padding: var(--spacing-lg);
+  }
+}
+
+@media (max-width: 520px) {
+  .offseason-header {
+    font-size: 1rem;
+  }
+
+  .offseason-content {
+    font-size: 0.9rem;
+  }
+}
+
+@media (max-width: 400px) {
+  .offseason-header {
+    font-size: 0.85rem;
+  }
+}
+

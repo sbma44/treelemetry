@@ -7,6 +7,8 @@ import config from './config.js';
 Chart.register(...registerables);
 
 // State
+let isOffseason = false;
+let seasonData = null;
 let chartInstance = null; // Real-time chart
 let chart5m = null; // 5-minute aggregates chart
 let chart1h = null; // 1-hour aggregates chart
@@ -195,6 +197,85 @@ function startFaviconAnimation() {
   }
 }
 
+/**
+ * Check if offseason mode should be forced via URL parameter
+ * Use ?offseason=true to test offseason mode locally
+ */
+function isOffseasonForced() {
+  const urlParams = new URLSearchParams(window.location.search);
+  return urlParams.get('offseason') === 'true';
+}
+
+/**
+ * Show the offseason UI and hide normal content
+ */
+function showOffseasonMode(season, forced = false) {
+  const offseasonEl = document.getElementById('offseason-mode');
+  const containerEl = document.querySelector('.container');
+  const lightsEl = document.querySelector('christmas-lights');
+
+  if (offseasonEl) {
+    offseasonEl.style.display = 'block';
+
+    // Update season info if available
+    const seasonInfoEl = document.getElementById('offseason-season-info');
+    if (seasonInfoEl && season) {
+      const startDate = new Date(season.start).toLocaleDateString('en-US', {
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric'
+      });
+      const endDate = new Date(season.end).toLocaleDateString('en-US', {
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric'
+      });
+      seasonInfoEl.textContent = `Last season: ${startDate} – ${endDate}`;
+    }
+
+    // Add dev indicator if forced
+    if (forced) {
+      const devIndicator = document.createElement('div');
+      devIndicator.className = 'offseason-dev-indicator';
+      devIndicator.textContent = '⚙️ Dev Mode: Offseason Forced';
+      offseasonEl.appendChild(devIndicator);
+    }
+  }
+
+  // Hide normal content
+  if (containerEl) {
+    containerEl.style.display = 'none';
+  }
+
+  // Hide christmas lights in offseason
+  if (lightsEl) {
+    lightsEl.style.display = 'none';
+  }
+
+  console.log(`Offseason mode activated${forced ? ' (forced via URL parameter)' : ''}`);
+}
+
+/**
+ * Show normal content (season is active)
+ */
+function showNormalMode() {
+  const offseasonEl = document.getElementById('offseason-mode');
+  const containerEl = document.querySelector('.container');
+  const lightsEl = document.querySelector('christmas-lights');
+
+  if (offseasonEl) {
+    offseasonEl.style.display = 'none';
+  }
+
+  if (containerEl) {
+    containerEl.style.display = 'block';
+  }
+
+  if (lightsEl) {
+    lightsEl.style.display = 'block';
+  }
+}
+
 // DOM Elements
 const elements = {
   loading: document.getElementById('loading'),
@@ -348,6 +429,13 @@ async function fetchData() {
         yolinkSensorData.agg_1h = data.yolink_sensors.agg_1h;
       }
       console.log('Yolink sensor data loaded');
+    }
+
+    // Store season data
+    if (data.season) {
+      seasonData = data.season;
+      isOffseason = !data.season.is_active;
+      console.log(`Season data: active=${data.season.is_active}, start=${data.season.start}, end=${data.season.end}`);
     }
 
     return data;
@@ -1561,6 +1649,19 @@ function startReplay() {
 async function refreshData() {
   try {
     const data = await fetchData();
+
+    // Check if we've transitioned to offseason
+    const forcedOffseason = isOffseasonForced();
+    if (forcedOffseason || isOffseason) {
+      showOffseasonMode(seasonData, forcedOffseason);
+      // Stop refresh interval
+      if (refreshInterval) {
+        clearInterval(refreshInterval);
+        refreshInterval = null;
+      }
+      return;
+    }
+
     const measurements = data.measurements || [];
 
     if (measurements.length === 0) {
@@ -1628,6 +1729,17 @@ async function loadData() {
     elements.mainContent.style.display = 'none';
 
     const data = await fetchData();
+
+    // Check for forced offseason mode via URL parameter
+    const forcedOffseason = isOffseasonForced();
+
+    // If offseason (either naturally or forced), show offseason UI and stop
+    if (forcedOffseason || isOffseason) {
+      elements.loading.style.display = 'none';
+      showOffseasonMode(seasonData, forcedOffseason);
+      return;
+    }
+
     const measurements = data.measurements || [];
 
     if (measurements.length === 0) {
