@@ -4,91 +4,80 @@ A sophisticated monitoring system for tracking Christmas tree water levels with 
 
 ## Project Overview
 
-This project monitors and visualizes the water level of a Christmas tree through four main components:
+This project monitors and visualizes the water level of a Christmas tree through three main components:
 
-1. **MQTT Logger** - Captures MQTT messages from IoT sensors and stores them in DuckDB
-2. **Uploader** - Queries DuckDB, aggregates data, and uploads to S3
-3. **Infrastructure** - AWS CDK scripts that provision S3 bucket and IAM credentials
-4. **Static Site** - Vite-powered visualization dashboard served via GitHub Pages
+1. **Data Sleigh** - Unified MQTT logger, YoLink sensor integration, and S3 uploader with season-aware behavior
+2. **Infrastructure** - AWS CDK scripts that provision S3 bucket and IAM credentials
+3. **Static Site** - Vite-powered visualization dashboard served via GitHub Pages
 
 ## Architecture
 
 ```
-IoT Sensors (ESP8266, Yolink, etc.)
+IoT Sensors (ESP8266, YoLink, etc.)
     ↓ (MQTT messages)
-MQTT Broker (Mosquitto)
-    ↓
-MQTT Logger (Docker/systemd)
-    ↓
-DuckDB File (batched writes)
-    ↓
-Uploader (Docker daemon)
-    ↓ (aggregated data)
-S3 Bucket (gzipped JSON, public)
-    ↓
-GitHub Pages (static site)
-    ↓
-User's Browser (Chart.js visualizations)
+┌─────────────────────────────────────┐
+│           Data Sleigh               │
+│  ┌─────────────┐  ┌──────────────┐  │
+│  │ Local MQTT  │  │ YoLink Cloud │  │
+│  └──────┬──────┘  └──────┬───────┘  │
+│         └────────┬───────┘          │
+│                  ↓                  │
+│         DuckDB (normalized)         │
+│                  ↓                  │
+│         [Season Check]              │
+│              ↓    ↓                 │
+│        IN-SEASON  OFF-SEASON        │
+│           ↓           ↓             │
+│      Aggregate    Monthly           │
+│      & Upload     Backup            │
+└──────────┬────────────┬─────────────┘
+           ↓            ↓
+    S3 (JSON)     S3 (backups/)
+           ↓
+    GitHub Pages (static site)
+           ↓
+    User's Browser (Chart.js)
 ```
 
 ## Setup
 
 ### Prerequisites
 
-- Python 3.11+ with [uv](https://github.com/astral-sh/uv) installed
+- Python 3.11-3.13 with [uv](https://github.com/astral-sh/uv) installed
 - Node.js 18+ with npm (for CDK CLI via `npx` and Vite)
 - Docker
 - AWS CLI configured with appropriate permissions
 - MQTT broker (e.g., Mosquitto) for IoT sensor data
 
-### 1. MQTT Logger Setup
+### 1. Data Sleigh Setup
 
-The MQTT Logger captures sensor data and stores it in DuckDB. See [`mqtt_logger/README.md`](mqtt_logger/README.md) for complete documentation.
+Data Sleigh is the unified data collection and upload service. See [`data_sleigh/README.md`](data_sleigh/README.md) for complete documentation.
 
 **Quick Start with Docker:**
 
 ```bash
-cd mqtt_logger
-docker build -t mqtt-logger .
-docker run -d \
-  --name mqtt-logger \
-  --restart unless-stopped \
-  -v $(pwd)/data:/app/data \
-  -e MQTT_BROKER=mqtt.example.com \
-  -e TOPICS="xmas/tree/water/raw:water_level:Water level readings" \
-  mqtt-logger
+cd data_sleigh
+
+# Copy and edit the example configuration
+cp run-docker-data-sleigh.example.sh run-docker-data-sleigh.sh
+# Edit run-docker-data-sleigh.sh with your settings
+
+# Build and run
+docker build -t data-sleigh .
+./run-docker-data-sleigh.sh
 ```
 
-**Or with systemd:** See [`mqtt_logger/QUICKSTART.md`](mqtt_logger/QUICKSTART.md)
+**Key Features:**
+- 📡 Dual MQTT support (local broker + YoLink cloud)
+- 🔄 Season-aware behavior (automatic in-season/off-season modes)
+- 💾 Efficient DuckDB storage with normalized YoLink schema
+- ☁️ Gzip-compressed JSON uploads to S3
+- 📦 Automatic monthly backups during off-season
+- 📧 Email alerts for disk space monitoring
 
-### 2. Uploader Setup
+### 2. Infrastructure Setup
 
-The uploader runs as a long-running daemon that queries DuckDB and uploads to S3.
-
-```bash
-cd uploader
-uv sync
-```
-
-Build and run the Docker container:
-
-```bash
-cd uploader
-docker build -t treelemetry-uploader .
-docker run -d \
-  --name treelemetry-uploader \
-  --restart unless-stopped \
-  -e AWS_ACCESS_KEY_ID=xxx \
-  -e AWS_SECRET_ACCESS_KEY=yyy \
-  -v /path/to/mqtt_logs.db:/data/tree.duckdb:ro \
-  treelemetry-uploader
-```
-
-The container runs continuously, uploading every 30 seconds.
-
-### 3. Infrastructure Setup
-
-Deploy the CDK stack to create IAM credentials:
+Deploy the CDK stack to create S3 bucket and IAM credentials:
 
 ```bash
 cd infrastructure
@@ -97,14 +86,14 @@ npx aws-cdk bootstrap  # First time only
 npx aws-cdk deploy
 ```
 
-After deployment, the stack outputs will include the IAM credentials needed for the uploader.
+After deployment, the stack outputs will include the IAM credentials needed for Data Sleigh.
 
-### 4. Static Site Development
+### 3. Static Site Development
 
 ```bash
 cd site
 npm install
-npm run dev  # Development server
+npm run dev    # Development server
 npm run build  # Production build to ../docs/
 ```
 
@@ -121,6 +110,7 @@ The static site is built to the `docs/` directory and served via GitHub Pages:
 ## Data Format
 
 The JSON file uploaded to S3 includes:
+- **Season info** (start date, end date, active status)
 - **Raw measurements** (last 10 minutes)
 - **Aggregated data** (1m, 5m, 1h intervals)
 - **Consumption analysis** (detected segments, slopes, predictions)
@@ -132,6 +122,11 @@ All data is gzip-compressed for efficient transfer.
 ```json
 {
   "generated_at": "2025-12-05T12:00:00Z",
+  "season": {
+    "start": "2025-12-01",
+    "end": "2026-01-15",
+    "is_active": true
+  },
   "measurements": [...],
   "agg_1m": { "data": [...] },
   "agg_5m": { "data": [...] },
@@ -152,31 +147,64 @@ All data is gzip-compressed for efficient transfer.
 
 ```
 treelemetry/
-├── mqtt_logger/       # MQTT message logger
+├── data_sleigh/       # Unified MQTT logger + S3 uploader
 │   ├── Dockerfile
 │   ├── main.py
-│   ├── config/       # Configuration templates
-│   ├── src/          # Logger implementation
-│   └── tests/        # Test suite
-├── uploader/          # Data aggregation & S3 uploader
-│   ├── Dockerfile
-│   ├── pyproject.toml
-│   ├── sample_data.py # Test data generator
-│   └── src/
+│   ├── config/        # Configuration templates
+│   ├── src/           # Implementation
+│   ├── tests/         # Test suite
+│   └── tools/         # CLI utilities
 ├── infrastructure/    # AWS CDK for S3 & IAM
 │   ├── app.py
 │   ├── cdk.json
 │   └── infrastructure/
-├── site/             # Vite static site
+├── site/              # Vite static site
 │   ├── index.html
 │   ├── package.json
 │   └── src/
-└── docs/             # Built site (GitHub Pages)
+├── docs/              # Built site (GitHub Pages)
+├── mqtt_logger/       # Legacy (replaced by data_sleigh)
+└── uploader/          # Legacy (replaced by data_sleigh)
 ```
 
 See [`PROJECT_STRUCTURE.md`](PROJECT_STRUCTURE.md) for complete details.
 
+### Running Tests
+
+```bash
+# Data Sleigh tests
+cd data_sleigh
+uv sync --all-extras
+uv run pytest
+
+# With coverage
+uv run pytest --cov=src --cov-report=html
+```
+
+### Makefile Targets
+
+```bash
+make help              # Show available targets
+make install           # Install all dependencies
+make build-docker      # Build Docker images
+make test              # Run tests
+make dev-site          # Start site dev server
+make status            # Check component status
+```
+
+## Migration Notes
+
+Data Sleigh consolidates the previous `mqtt_logger` and `uploader` components:
+
+**Benefits:**
+- ✅ Eliminates DuckDB locking issues (single process)
+- ✅ Simplified deployment (one container vs two)
+- ✅ Season-aware behavior built-in
+- ✅ Improved YoLink schema (normalized columns)
+- ✅ Monthly backups during off-season
+
+The legacy `mqtt_logger/` and `uploader/` directories are preserved for reference but are no longer actively maintained.
+
 ## License
 
 MIT
-
