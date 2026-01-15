@@ -8,6 +8,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+import paho.mqtt.client as mqtt
+
 from .aggregator import (
     query_aggregated_data,
     query_water_levels,
@@ -19,7 +21,7 @@ from .backup import BackupManager
 from .config import load_config
 from .mqtt_client import MQTTLogger
 from .storage import MessageStore
-from .uploader import create_json_output, upload_to_s3
+from .uploader import create_json_output, read_from_s3, upload_to_s3
 from .yolink_client import YoLinkClient
 
 logger = logging.getLogger(__name__)
@@ -50,6 +52,7 @@ class DataSleighApp:
         self.alert_manager: AlertManager | None = None
         self.yolink_client: YoLinkClient | None = None
         self.backup_manager: BackupManager | None = None
+        self._echo_mqtt_client: mqtt.Client | None = None
 
         self._running = False
         self._shutdown_event = threading.Event()
@@ -272,6 +275,97 @@ class DataSleighApp:
             alert_cooldown_hours=self.config.alerting.alert_cooldown_hours,
         )
 
+    def _initialize_mqtt_echo(self) -> None:
+        """Initialize the MQTT echo client if configured.
+
+        This client echoes ALL YoLink messages to a local MQTT broker,
+        allowing other applications to consume YoLink data without
+        managing YoLink connections directly.
+        """
+        echo_config = self.config.mqtt_echo
+        if not echo_config.enabled:
+            logger.info("MQTT echo is disabled")
+            return
+
+        if not echo_config.broker:
+            logger.warning("MQTT echo enabled but no broker configured, skipping")
+            return
+
+        client_id = echo_config.client_id or f"data_sleigh_echo_{int(time.time())}"
+        self._echo_mqtt_client = mqtt.Client(
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+            client_id=client_id,
+        )
+
+        # Set authentication if provided (authless by default)
+        if echo_config.username:
+            self._echo_mqtt_client.username_pw_set(
+                echo_config.username, echo_config.password
+            )
+
+        # Simple callbacks for logging
+        def on_connect(client, userdata, flags, reason_code, properties=None):
+            if reason_code == 0:
+                logger.info(
+                    f"MQTT echo client connected to {echo_config.broker}:{echo_config.port}"
+                )
+            else:
+                logger.error(f"MQTT echo client connection failed: {reason_code}")
+
+        def on_disconnect(client, userdata, flags, reason_code, properties=None):
+            if reason_code == 0:
+                logger.info("MQTT echo client disconnected cleanly")
+            else:
+                logger.warning(f"MQTT echo client disconnected: {reason_code}")
+
+        self._echo_mqtt_client.on_connect = on_connect
+        self._echo_mqtt_client.on_disconnect = on_disconnect
+
+        try:
+            logger.info(
+                f"Connecting MQTT echo client to {echo_config.broker}:{echo_config.port}"
+            )
+            self._echo_mqtt_client.connect(echo_config.broker, echo_config.port)
+            self._echo_mqtt_client.loop_start()
+            logger.info("MQTT echo client started")
+        except Exception as e:
+            logger.error(f"Failed to connect MQTT echo client: {e}")
+            self._echo_mqtt_client = None
+
+    def _echo_yolink_message(self, topic: str, payload: bytes) -> None:
+        """Echo a YoLink message to the local MQTT broker.
+
+        Args:
+            topic: The original YoLink topic (e.g., yl-home/{home_id}/{device_id}/report)
+            payload: The raw message payload
+        """
+        if not self._echo_mqtt_client:
+            return
+
+        echo_config = self.config.mqtt_echo
+
+        # Transform the topic: yl-home/{home_id}/{device_id}/report -> {prefix}/{device_id}/report
+        # Original format: yl-home/{home_id}/{device_id}/report
+        topic_parts = topic.split("/")
+        if len(topic_parts) >= 4:
+            device_id = topic_parts[2]
+            suffix = "/".join(topic_parts[3:])
+            echo_topic = f"{echo_config.topic_prefix}/{device_id}/{suffix}"
+        else:
+            # Fallback: just prepend the prefix
+            echo_topic = f"{echo_config.topic_prefix}/{topic}"
+
+        try:
+            result = self._echo_mqtt_client.publish(
+                echo_topic, payload, qos=echo_config.qos
+            )
+            if result.rc == mqtt.MQTT_ERR_SUCCESS:
+                logger.debug(f"Echoed YoLink message to {echo_topic}")
+            else:
+                logger.warning(f"Failed to echo message to {echo_topic}: {result.rc}")
+        except Exception as e:
+            logger.error(f"Error echoing YoLink message: {e}")
+
     def _initialize_yolink(self) -> None:
         """Initialize the YoLink client if configured."""
         if not self.config.yolink.enabled:
@@ -282,9 +376,15 @@ class DataSleighApp:
             logger.info("YoLink credentials not configured, skipping")
             return
 
+        # Determine echo callback
+        echo_callback = None
+        if self._echo_mqtt_client:
+            echo_callback = self._echo_yolink_message
+
         self.yolink_client = YoLinkClient(
             self.config.yolink,
             self._handle_yolink_sensor,
+            echo_callback=echo_callback,
         )
 
     def _initialize_backup(self) -> None:
@@ -292,6 +392,222 @@ class DataSleighApp:
         self.backup_manager = BackupManager(
             self.config.backup,
             self.config.s3,
+        )
+
+    def _check_and_sync_s3_state(self) -> None:
+        """Check S3 file and update if season state doesn't match.
+
+        At startup, reads the current S3 JSON file and compares its
+        season.is_active state with the current is_in_season() value.
+        If they differ, uploads an updated file to ensure the website
+        reflects the correct state.
+
+        This handles the case where the app is restarted with a different
+        date range configuration (e.g., now out-of-season when it was
+        previously in-season).
+        """
+        if not self.config.s3.aws_access_key_id or not self.config.s3.aws_secret_access_key:
+            logger.warning("S3 credentials not configured, skipping S3 state sync")
+            return
+
+        logger.info("Checking S3 file state...")
+
+        current_data = read_from_s3(
+            bucket=self.config.s3.bucket,
+            key=self.config.s3.json_key,
+            aws_access_key=self.config.s3.aws_access_key_id,
+            aws_secret_key=self.config.s3.aws_secret_access_key,
+        )
+
+        is_in_season = self.is_in_season()
+
+        if current_data is None:
+            # File doesn't exist - only upload if we're in season
+            # (the upload loop will handle regular updates)
+            if is_in_season:
+                logger.info("S3 file does not exist, will be created by upload loop")
+            else:
+                logger.info("S3 file does not exist and we're off-season, creating placeholder")
+                self._upload_off_season_state()
+            return
+
+        # Check if the is_active state matches
+        s3_is_active = current_data.get("season", {}).get("is_active", None)
+
+        if s3_is_active is None:
+            logger.warning("S3 file missing season.is_active field, will be updated")
+            if not is_in_season:
+                self._upload_off_season_state()
+            return
+
+        if s3_is_active == is_in_season:
+            logger.info(
+                f"S3 file state matches current state "
+                f"(is_active={s3_is_active}, in_season={is_in_season})"
+            )
+            return
+
+        # State mismatch - need to update
+        logger.info(
+            f"S3 file state mismatch: S3 has is_active={s3_is_active}, "
+            f"but current state is in_season={is_in_season}"
+        )
+
+        if is_in_season:
+            # We're now in-season but S3 says off-season
+            # The upload loop will handle this, but let's do an immediate update
+            logger.info("Updating S3 file to reflect in-season state")
+            self._perform_upload(verbose=True)
+        else:
+            # We're now off-season but S3 says in-season
+            logger.info("Updating S3 file to reflect off-season state")
+            self._upload_off_season_state()
+
+    def _upload_off_season_state(self) -> None:
+        """Upload off-season state to S3 with full historical data.
+
+        Creates a complete JSON file with all available data but with
+        is_active=false. This allows debug modes on the website to still
+        render historical data in on-season mode if desired.
+        """
+        if not self.store:
+            logger.warning("Storage not initialized, cannot perform off-season upload")
+            return
+
+        # Query raw data (recent measurements)
+        measurements = query_water_levels(
+            self.store.get_connection(),
+            minutes=self.config.upload.minutes_of_data,
+        )
+
+        # Query aggregated data
+        agg_1m = query_aggregated_data(
+            self.store.get_connection(), interval_minutes=1, lookback_hours=1
+        )
+        agg_5m = query_aggregated_data(
+            self.store.get_connection(),
+            interval_minutes=5,
+            lookback_hours=24,
+        )
+        agg_1h = query_aggregated_data(
+            self.store.get_connection(), interval_minutes=60, lookback_hours=None
+        )
+
+        # Query YoLink aggregated data
+        yolink_1m = query_yolink_aggregated_data(
+            self.store.get_connection(), interval_minutes=1, lookback_hours=1
+        )
+        yolink_5m = query_yolink_aggregated_data(
+            self.store.get_connection(), interval_minutes=5, lookback_hours=24
+        )
+        yolink_1h = query_yolink_aggregated_data(
+            self.store.get_connection(),
+            interval_minutes=60,
+            lookback_hours=None,
+        )
+
+        # Perform segment analysis
+        analysis = analyze_water_level_segments(self.store.get_connection())
+        if analysis:
+            self._cached_analysis = analysis
+
+        # Create JSON output with is_in_season=False but full data
+        output_data = create_json_output(
+            measurements,
+            season_start=self.config.season.start.isoformat(),
+            season_end=self.config.season.end.isoformat(),
+            is_in_season=False,
+            aggregates_1m=agg_1m,
+            aggregates_5m=agg_5m,
+            aggregates_1h=agg_1h,
+            analysis=self._cached_analysis,
+            yolink_1m=yolink_1m,
+            yolink_5m=yolink_5m,
+            yolink_1h=yolink_1h,
+            replay_delay=self.config.upload.replay_delay_seconds,
+        )
+
+        upload_to_s3(
+            data=output_data,
+            bucket=self.config.s3.bucket,
+            key=self.config.s3.json_key,
+            aws_access_key=self.config.s3.aws_access_key_id,
+            aws_secret_key=self.config.s3.aws_secret_access_key,
+            verbose=True,
+        )
+        logger.info("Off-season state with full data uploaded to S3")
+
+    def _perform_upload(self, verbose: bool = False) -> None:
+        """Perform a single S3 upload with current data.
+
+        Args:
+            verbose: Whether to log detailed upload info
+        """
+        if not self.store:
+            logger.warning("Storage not initialized, cannot perform upload")
+            return
+
+        # Query raw data
+        measurements = query_water_levels(
+            self.store.get_connection(),
+            minutes=self.config.upload.minutes_of_data,
+        )
+
+        # Query aggregated data
+        agg_1m = query_aggregated_data(
+            self.store.get_connection(), interval_minutes=1, lookback_hours=1
+        )
+        agg_5m = query_aggregated_data(
+            self.store.get_connection(),
+            interval_minutes=5,
+            lookback_hours=24,
+        )
+        agg_1h = query_aggregated_data(
+            self.store.get_connection(), interval_minutes=60, lookback_hours=None
+        )
+
+        # Query YoLink aggregated data
+        yolink_1m = query_yolink_aggregated_data(
+            self.store.get_connection(), interval_minutes=1, lookback_hours=1
+        )
+        yolink_5m = query_yolink_aggregated_data(
+            self.store.get_connection(), interval_minutes=5, lookback_hours=24
+        )
+        yolink_1h = query_yolink_aggregated_data(
+            self.store.get_connection(),
+            interval_minutes=60,
+            lookback_hours=None,
+        )
+
+        # Perform segment analysis
+        analysis = analyze_water_level_segments(self.store.get_connection())
+        if analysis:
+            self._cached_analysis = analysis
+
+        # Create JSON output with season information
+        output_data = create_json_output(
+            measurements,
+            season_start=self.config.season.start.isoformat(),
+            season_end=self.config.season.end.isoformat(),
+            is_in_season=True,
+            aggregates_1m=agg_1m,
+            aggregates_5m=agg_5m,
+            aggregates_1h=agg_1h,
+            analysis=self._cached_analysis,
+            yolink_1m=yolink_1m,
+            yolink_5m=yolink_5m,
+            yolink_1h=yolink_1h,
+            replay_delay=self.config.upload.replay_delay_seconds,
+        )
+
+        # Upload to S3
+        upload_to_s3(
+            data=output_data,
+            bucket=self.config.s3.bucket,
+            key=self.config.s3.json_key,
+            aws_access_key=self.config.s3.aws_access_key_id,
+            aws_secret_key=self.config.s3.aws_secret_access_key,
+            verbose=verbose,
         )
 
     def _send_startup_notification(self) -> None:
@@ -356,6 +672,12 @@ YoLink Integration:
   Air Sensor: {self.config.yolink.air_sensor_device_id or '(not configured)'}
   Water Sensor: {self.config.yolink.water_sensor_device_id or '(not configured)'}
   Table: {self.config.yolink.table_name}
+
+MQTT Echo (YoLink relay):
+  Enabled: {self.config.mqtt_echo.enabled}
+  Broker: {self.config.mqtt_echo.broker or '(not configured)'}:{self.config.mqtt_echo.port}
+  Topic Prefix: {self.config.mqtt_echo.topic_prefix}
+  Auth: {'enabled' if self.config.mqtt_echo.username else 'disabled (anonymous)'}
 
 S3 Configuration:
   Bucket: {self.config.s3.bucket}
@@ -533,11 +855,18 @@ This is an automated notification.
             logger.info("Initializing alerting...")
             self._initialize_alerting()
 
+            logger.info("Initializing MQTT echo client...")
+            self._initialize_mqtt_echo()
+
             logger.info("Initializing YoLink client...")
             self._initialize_yolink()
 
             logger.info("Initializing backup manager...")
             self._initialize_backup()
+
+            # Check and sync S3 state at startup
+            logger.info("Checking S3 state...")
+            self._check_and_sync_s3_state()
 
             # Send startup notification email
             self._send_startup_notification()
@@ -620,6 +949,15 @@ This is an automated notification.
             except Exception as e:
                 logger.error(f"Error stopping YoLink client: {e}")
 
+        # Stop MQTT echo client
+        if self._echo_mqtt_client:
+            try:
+                self._echo_mqtt_client.loop_stop()
+                self._echo_mqtt_client.disconnect()
+                logger.info("MQTT echo client stopped")
+            except Exception as e:
+                logger.error(f"Error stopping MQTT echo client: {e}")
+
         self._shutdown_event.set()
 
     def _cleanup(self) -> None:
@@ -659,6 +997,7 @@ def main(config_path: str | None = None) -> None:
     except Exception as e:
         print(f"Fatal error: {e}", file=sys.stderr)
         sys.exit(1)
+
 
 
 

@@ -103,6 +103,7 @@ class YoLinkClient:
     - Automatic reconnection with exponential backoff
     - Device ID filtering to process only configured sensors
     - Separate handling for air sensor (temp + humidity) and water sensor (temp only)
+    - Optional echo callback for forwarding ALL messages to a local MQTT broker
 
     Example:
         >>> def on_sensor_data(device_type, device_id, temperature, humidity, battery, signal, raw_data):
@@ -118,6 +119,7 @@ class YoLinkClient:
         sensor_callback: Callable[
             [str, str, float | None, float | None, int | None, int | None, dict], None
         ],
+        echo_callback: Callable[[str, bytes], None] | None = None,
     ):
         """Initialize the YoLink client.
 
@@ -132,9 +134,14 @@ class YoLinkClient:
                 - battery: Battery level (int, 0-100) or None
                 - signal: Signal strength (int, dBm) or None
                 - raw_data: The complete raw message data dict
+            echo_callback: Optional function called for ALL messages (before device filtering).
+                Signature: callback(topic, payload)
+                - topic: The full MQTT topic string
+                - payload: The raw message payload bytes
         """
         self.config = config
         self.sensor_callback = sensor_callback
+        self.echo_callback = echo_callback
         self._should_run = False
         self._connected = False
         self._thread: threading.Thread | None = None
@@ -153,6 +160,8 @@ class YoLinkClient:
             f"YoLink client initialized with {len(self._device_ids)} device(s): "
             f"air={config.air_sensor_device_id}, water={config.water_sensor_device_id}"
         )
+        if echo_callback:
+            logger.info("YoLink message echo enabled")
 
     def _process_message(self, device_id: str, payload: dict) -> None:
         """Process an incoming MQTT message.
@@ -304,6 +313,18 @@ class YoLinkClient:
                                 logger.debug(
                                     f"YoLink MQTT raw payload: {message.payload[:500]}"
                                 )
+
+                                # Echo ALL messages if callback is configured
+                                # This happens BEFORE any filtering
+                                if self.echo_callback:
+                                    try:
+                                        self.echo_callback(
+                                            str(message.topic), message.payload
+                                        )
+                                    except Exception as e:
+                                        logger.error(
+                                            f"Error in echo callback: {e}", exc_info=True
+                                        )
 
                                 if not self._should_run:
                                     logger.info(

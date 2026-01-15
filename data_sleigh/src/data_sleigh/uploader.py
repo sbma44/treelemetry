@@ -8,8 +8,55 @@ from datetime import datetime, timezone
 from typing import Any
 
 import boto3
+from botocore.exceptions import ClientError
 
 logger = logging.getLogger(__name__)
+
+
+def read_from_s3(
+    bucket: str,
+    key: str,
+    aws_access_key: str,
+    aws_secret_key: str,
+) -> dict[str, Any] | None:
+    """Read JSON data from S3.
+
+    Args:
+        bucket: S3 bucket name
+        key: S3 object key
+        aws_access_key: AWS access key ID
+        aws_secret_key: AWS secret access key
+
+    Returns:
+        Parsed JSON data as dictionary, or None if file doesn't exist or read fails
+    """
+    try:
+        s3_client = boto3.client(
+            "s3",
+            aws_access_key_id=aws_access_key,
+            aws_secret_access_key=aws_secret_key,
+        )
+
+        response = s3_client.get_object(Bucket=bucket, Key=key)
+        body = response["Body"].read()
+
+        # Check if content is gzip-compressed
+        content_encoding = response.get("ContentEncoding", "")
+        if content_encoding == "gzip" or body[:2] == b"\x1f\x8b":
+            body = gzip.decompress(body)
+
+        return json.loads(body.decode("utf-8"))
+
+    except ClientError as e:
+        error_code = e.response.get("Error", {}).get("Code", "")
+        if error_code == "NoSuchKey":
+            logger.info(f"S3 file s3://{bucket}/{key} does not exist yet")
+            return None
+        logger.error(f"Error reading from S3: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error reading from S3: {e}")
+        return None
 
 
 def calculate_stats(measurements: list[dict[str, Any]]) -> dict[str, float]:
@@ -214,6 +261,7 @@ def upload_to_s3(
     except Exception as e:
         logger.error(f"ERROR uploading to S3: {e}")
         raise
+
 
 
 

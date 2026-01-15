@@ -118,6 +118,31 @@ class YoLinkConfig:
 
 
 @dataclass
+class MQTTEchoConfig:
+    """Configuration for echoing YoLink MQTT messages to a local broker.
+
+    Attributes:
+        enabled: Whether MQTT echo is enabled
+        broker: MQTT broker hostname or IP address
+        port: MQTT broker port (default: 1883)
+        username: Optional username for authentication (None = no auth)
+        password: Optional password for authentication (None = no auth)
+        client_id: Optional client ID (auto-generated if not provided)
+        topic_prefix: Prefix for echoed messages (default: "yolink")
+        qos: Quality of Service level (0, 1, or 2)
+    """
+
+    enabled: bool = False
+    broker: str | None = None
+    port: int = 1883
+    username: str | None = None
+    password: str | None = None
+    client_id: str | None = None
+    topic_prefix: str = "yolink"
+    qos: int = 1
+
+
+@dataclass
 class SeasonConfig:
     """Season configuration for upload behavior.
 
@@ -191,6 +216,7 @@ class Config:
         logging: Logging configuration
         alerting: Alerting configuration
         yolink: YoLink integration configuration
+        mqtt_echo: Configuration for echoing YoLink messages to local MQTT
         season: Season configuration for upload behavior
         s3: S3 configuration for uploads and backups
         upload: Upload behavior configuration
@@ -203,6 +229,7 @@ class Config:
     logging: LoggingConfig
     alerting: AlertingConfig
     yolink: YoLinkConfig
+    mqtt_echo: MQTTEchoConfig
     season: SeasonConfig
     s3: S3Config
     upload: UploadConfig
@@ -346,6 +373,31 @@ def load_config(config_path: Path | str) -> Config:
 
     yolink_config = YoLinkConfig(**yolink_data)
 
+    # Parse MQTT echo config (optional)
+    mqtt_echo_data = data.get("mqtt_echo", {})
+
+    # Override with environment variables if set
+    if os.getenv("MQTT_ECHO_ENABLED"):
+        mqtt_echo_data["enabled"] = os.getenv("MQTT_ECHO_ENABLED").lower() in ("true", "1", "yes")
+    if os.getenv("MQTT_ECHO_BROKER"):
+        mqtt_echo_data["broker"] = os.getenv("MQTT_ECHO_BROKER")
+        # Auto-enable if broker is specified
+        mqtt_echo_data["enabled"] = True
+    if os.getenv("MQTT_ECHO_PORT"):
+        mqtt_echo_data["port"] = int(os.getenv("MQTT_ECHO_PORT"))
+    if os.getenv("MQTT_ECHO_USERNAME"):
+        mqtt_echo_data["username"] = os.getenv("MQTT_ECHO_USERNAME")
+    if os.getenv("MQTT_ECHO_PASSWORD"):
+        mqtt_echo_data["password"] = os.getenv("MQTT_ECHO_PASSWORD")
+    if os.getenv("MQTT_ECHO_CLIENT_ID"):
+        mqtt_echo_data["client_id"] = os.getenv("MQTT_ECHO_CLIENT_ID")
+    if os.getenv("MQTT_ECHO_TOPIC_PREFIX"):
+        mqtt_echo_data["topic_prefix"] = os.getenv("MQTT_ECHO_TOPIC_PREFIX")
+    if os.getenv("MQTT_ECHO_QOS"):
+        mqtt_echo_data["qos"] = int(os.getenv("MQTT_ECHO_QOS"))
+
+    mqtt_echo_config = MQTTEchoConfig(**mqtt_echo_data)
+
     # Parse season config
     season_data = data["season"]
     if "start" not in season_data:
@@ -417,11 +469,13 @@ def load_config(config_path: Path | str) -> Config:
         logging=logging_config,
         alerting=alerting_config,
         yolink=yolink_config,
+        mqtt_echo=mqtt_echo_config,
         season=season_config,
         s3=s3_config,
         upload=upload_config,
         backup=backup_config,
     )
+
 
 
 

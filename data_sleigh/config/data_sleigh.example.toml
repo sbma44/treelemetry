@@ -114,6 +114,46 @@ max_reconnect_delay = 300
 # air_sensor_device_id = "d88b4c04000a9da6"
 # water_sensor_device_id = "d88b4c010008bbe2"
 
+[mqtt_echo]
+# MQTT echo configuration for relaying ALL YoLink messages to a local broker
+# This allows other applications to consume YoLink data without needing
+# YoLink credentials or consuming connection slots from YoLink's limit.
+#
+# Messages are echoed to: {topic_prefix}/{device_id}/report
+# e.g., yolink/d88b4c04000a9da6/report
+
+# Enable/disable MQTT echo (auto-enabled if broker is set via env var)
+enabled = false
+
+# Local MQTT broker hostname or IP address
+broker = ""
+
+# Local MQTT broker port
+port = 1883
+
+# Optional: username for broker authentication (leave empty for no auth)
+username = ""
+
+# Optional: password for broker authentication (leave empty for no auth)
+password = ""
+
+# Optional: client ID (auto-generated if not specified)
+client_id = ""
+
+# Topic prefix for echoed messages
+# YoLink messages arrive as: yl-home/{home_id}/{device_id}/report
+# They are echoed as: {topic_prefix}/{device_id}/report
+topic_prefix = "yolink"
+
+# Quality of Service level for echoed messages
+qos = 1
+
+# Example configuration (uncomment and modify):
+# enabled = true
+# broker = "localhost"
+# port = 1883
+# topic_prefix = "yolink"
+
 [season]
 # Season dates in ISO format (YYYY-MM-DD)
 # Data collection continues year-round
@@ -161,6 +201,7 @@ day_of_month = 1
 
 # Hour of day to run backup (0-23, 24-hour format)
 hour = 3
+
 
 
 
